@@ -1,0 +1,17 @@
+data/
+exports/
+backups/
+community-notes/private/
+summary.md
+*.xlsx
+*.xls
+*.csv
+*.tsv
+app/dist/
+app/node_modules/
+app/test-results/
+app/playwright-report/
+app/coverage/
+app/*.tsbuildinfo
+*.tmp-*
+*.quarantine-*

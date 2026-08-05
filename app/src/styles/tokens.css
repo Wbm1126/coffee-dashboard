@@ -1,0 +1,67 @@
+:root {
+  color-scheme: light;
+  --paper: #f4efe3;
+  --paper-bright: #fffaf0;
+  --ink: #201d1a;
+  --ink-muted: #6e665f;
+  --berry: #ad3151;
+  --berry-dark: #7a1f38;
+  --leaf: #1d7567;
+  --leaf-soft: #9bc7b8;
+  --apricot: #eea85b;
+  --line: rgba(32, 29, 26, 0.17);
+  --shadow: 0 28px 70px rgba(72, 50, 36, 0.12);
+  --font-display: 'Songti SC', 'STSong', 'Noto Serif CJK SC', serif;
+  --font-body: 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans CJK SC', sans-serif;
+  --font-data: 'DIN Alternate', 'Bahnschrift', 'Arial Narrow', sans-serif;
+  --content: min(1180px, calc(100vw - 48px));
+  font-family: var(--font-body);
+  color: var(--ink);
+  background: var(--paper);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  background: var(--paper);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    linear-gradient(90deg, transparent 0 7%, rgba(173, 49, 81, 0.035) 7% 7.1%, transparent 7.1%),
+    var(--paper);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid var(--leaf);
+  outline-offset: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
