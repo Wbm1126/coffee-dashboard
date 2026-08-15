@@ -1,0 +1,41 @@
+import type { RecommendationItem } from '../../../domain/schema';
+
+export const RECOMMENDATION_CONFIDENCE_LABELS: Readonly<Record<RecommendationItem['confidence'], string>> = {
+  high: '高置信',
+  medium: '中等置信',
+  low: '低置信 / 资料较少',
+};
+
+export const RECOMMENDATION_COPY = {
+  reading: '正在读取本地推荐…',
+  autoRefreshing: '本地数据有变化，正在离线重算推荐…',
+  manualRefreshing: '正在按当前本地数据重新生成…',
+  malformedRefreshReconciled: '推荐响应不完整，写入结果未知；已重新读取本地数据，请确认版本后再重试。',
+  malformedRefreshUnreconciled: '推荐响应不完整且重新读取失败；请勿重复生成，稍后重新打开推荐确认。',
+  refreshConflictReconciled: '数据已更新，推荐没有重复写入；已刷新后将自动重算。',
+  refreshConflictUnreconciled: '数据已更新，推荐没有写入；页面刷新也失败，请稍后重试。',
+  refreshRejected: '推荐没有生成；现有快照仍可查看，请重试。',
+  autoRefreshSaved: '已按当前本地数据生成个性化推荐。',
+  manualRefreshSaved: '推荐已按本地数据重新生成。',
+  refreshSavedViewFailed: '推荐已保存到本地，但页面数据刷新失败；请勿重复生成，稍后重试。',
+  refreshInterruptedReconciled: '推荐请求中断，写入结果未知；已重新读取本地数据，请确认版本后再重试。',
+  refreshInterruptedUnreconciled: '推荐请求中断且重新读取失败；请勿重复生成，稍后重新打开推荐确认。',
+  snapshotCurrent: '推荐快照与当前本地数据一致。',
+  snapshotReadFailed: '暂时无法读取推荐快照；本地记录没有改变。',
+  following: '正在写入本地关注…',
+  malformedFollowReconciled: '关注响应不完整，写入结果未知；已重新读取本地数据，请确认状态后再操作。',
+  malformedFollowUnreconciled: '关注响应不完整且重新读取失败；请勿重复提交，稍后重新打开确认。',
+  followRejected: '关注没有保存；当前推荐仍可查看。',
+  followSaved: '已加入关注；推荐会按新数据版本自动重算。',
+  followSavedViewFailed: '关注已保存到本地，但页面刷新失败；请勿重复提交。',
+  followInterruptedReconciled: '关注请求中断，写入结果未知；已重新读取本地数据，请确认状态后再操作。',
+  followInterruptedUnreconciled: '关注请求中断且重新读取失败；请勿重复提交，稍后重新打开确认。',
+  invalidBudget: '预算必须是大于 0 的每 100g 金额；偏好没有保存。',
+  malformedPreferenceReconciled: '偏好响应不完整，写入结果未知；已重新读取本地数据，请确认偏好后再重试。',
+  malformedPreferenceUnreconciled: '偏好响应不完整且重新读取失败；请勿重复保存，稍后重新打开确认。',
+  preferenceRejected: '偏好没有保存，当前输入已保留；请刷新本地数据后重试。',
+  preferenceSaved: '偏好已保存到本地；推荐正在按新版本重算。',
+  preferenceSavedViewFailed: '偏好已保存到本地，但页面刷新失败；请勿重复保存，先重试刷新推荐。',
+  preferenceInterruptedReconciled: '偏好请求中断，写入结果未知；已重新读取本地数据，请确认偏好后再重试。',
+  preferenceInterruptedUnreconciled: '偏好请求中断且重新读取失败；请勿重复保存，当前输入仍保留。',
+} as const;

@@ -1,8 +1,8 @@
-data/
-exports/
-backups/
-community-notes/private/
-summary.md
+/data/
+/exports/
+/backups/
+/community-notes/private/
+/summary.md
 *.xlsx
 *.xls
 *.csv
@@ -13,5 +13,8 @@ app/test-results/
 app/playwright-report/
 app/coverage/
 app/*.tsbuildinfo
+app/*.log
+app/.env
+app/.env.*
 *.tmp-*
 *.quarantine-*

@@ -1,0 +1,27 @@
+# Dependencies and generated output
+/node_modules/
+/dist/
+/coverage/
+/test-results/
+/playwright-report/
+*.tsbuildinfo
+
+# Local runtime data and exports
+/data/
+/exports/
+
+# Logs and temporary files
+*.log
+*.tmp-*
+*.quarantine-*
+
+# Local configuration
+.env
+.env.*
+!.env.example
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

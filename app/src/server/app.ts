@@ -4,6 +4,14 @@ import { existsSync } from 'node:fs';
 import { z } from 'zod';
 import { JsonRepository } from '../storage/json-repository.js';
 import { installLocalSecurity } from './local-security.js';
+import { registerImportRoutes } from './routes/import.js';
+import { registerDrinkingRoutes } from './routes/drinking.js';
+import { registerPurchaseRoutes } from './routes/purchases.js';
+import { registerBeanRoutes } from './routes/beans.js';
+import { registerRecommendationRoutes } from './routes/recommendations.js';
+import { registerCollectionRoutes } from './routes/collect.js';
+import { registerExportRoutes } from './routes/exports.js';
+import type { CollectionService } from '../collectors/service.js';
 
 export interface BuildAppOptions {
   repository: JsonRepository;
@@ -11,6 +19,7 @@ export interface BuildAppOptions {
   serveStatic?: boolean;
   allowedOrigins?: string[];
   csrfToken?: string;
+  collectionService?: CollectionService;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -49,6 +58,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     return reply.code(200).send(inspection);
   });
 
+  registerImportRoutes(app, options.repository);
+  registerDrinkingRoutes(app, options.repository);
+  registerPurchaseRoutes(app, options.repository);
+  registerBeanRoutes(app, options.repository);
+  registerRecommendationRoutes(app, options.repository);
+  registerCollectionRoutes(app, options.repository, options.collectionService);
+  registerExportRoutes(app, options.repository);
+
   if (options.serveStatic !== false && options.staticRoot && existsSync(options.staticRoot)) {
     await app.register(fastifyStatic, {
       root: options.staticRoot,
@@ -64,4 +81,3 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   return app;
 }
-

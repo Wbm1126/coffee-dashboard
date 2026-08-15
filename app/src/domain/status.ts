@@ -1,4 +1,5 @@
 import type { CoffeeData } from './schema.js';
+import { isDrinkingRecordReviewComplete } from './review-completeness.js';
 
 export type BeanBadge =
   | 'followed'
@@ -6,10 +7,6 @@ export type BeanBadge =
   | 'drank_pending_review'
   | 'review_complete'
   | 'archived';
-
-function reviewIsComplete(state: string | undefined): boolean {
-  return state === 'reviewed' || state === 'not_applicable';
-}
 
 export function deriveBeanBadges(data: CoffeeData, beanId: string): BeanBadge[] {
   const bean = data.beans.find((candidate) => candidate.id === beanId);
@@ -34,10 +31,7 @@ export function deriveBeanBadges(data: CoffeeData, beanId: string): BeanBadge[] 
     (record) => record.beanId === beanId && !record.deletedAt && !record.isDraft,
   );
   if (drinks.length > 0) {
-    const allComplete = drinks.every((record) => {
-      const dimensions = [record.americanoReview, record.milkReview];
-      return dimensions.every((review) => review !== null && reviewIsComplete(review.state));
-    });
+    const allComplete = drinks.every(isDrinkingRecordReviewComplete);
     badges.add(allComplete ? 'review_complete' : 'drank_pending_review');
   }
 

@@ -1,44 +1,72 @@
-import { useEffect, useState } from 'react';
-
-type AppMode = 'loading' | 'ready' | 'read_only' | 'recovery' | 'error';
-
-interface SnapshotResponse {
-  mode: 'ready' | 'read_only' | 'recovery';
-  data?: {
-    dataRevision: number;
-    beans: unknown[];
-    drinkingRecords: unknown[];
-  };
-  reason?: string;
-}
+import { useCallback, useEffect, useState } from 'react';
+import { ImportWizard } from './features/import/ImportWizard';
+import { CatchUpQueue } from './features/catch-up/CatchUpQueue';
+import { PurchaseEditor } from './features/purchases/PurchaseEditor';
+import { DrinkingEditor } from './features/drinking/DrinkingEditor';
+import { RecordTimeline } from './features/history/RecordTimeline';
+import { BeanGallery } from './features/gallery/BeanGallery';
+import { RecommendationView } from './features/recommendations/RecommendationView';
+import { CollectionWizard } from './features/collection/CollectionWizard';
+import { RecoveryPanel } from './features/recovery/RecoveryPanel';
+import { advancePurchaseDraft, commitSnapshotState, purchaseEditorKey, readSnapshotResponse, type AppState, type EditingRecord, type PurchaseDraft } from './app-state';
 
 export function App() {
-  const [mode, setMode] = useState<AppMode>('loading');
-  const [snapshot, setSnapshot] = useState<SnapshotResponse | null>(null);
+  const [{ mode, snapshot }, setAppState] = useState<AppState>({ mode: 'loading', snapshot: null });
+  const [csrfToken, setCsrfToken] = useState('');
+  const [editingRecord, setEditingRecord] = useState<EditingRecord>(null);
+  const [purchaseDirty, setPurchaseDirty] = useState(false);
+  const [drinkingDirty, setDrinkingDirty] = useState(false);
+  const [purchaseDraft, setPurchaseDraft] = useState<PurchaseDraft>({ beanId: null, nonce: 0 });
+
+  const refreshSnapshot = useCallback(async () => {
+    const snapshotResponse = await fetch('/api/snapshot');
+    const body = await readSnapshotResponse(snapshotResponse);
+    setAppState((current) => commitSnapshotState(current, body));
+  }, []);
 
   useEffect(() => {
     let active = true;
     const load = async () => {
       try {
-        const sessionResponse = await fetch('/api/session');
+        const [sessionResponse, snapshotResponse] = await Promise.all([
+          fetch('/api/session'),
+          fetch('/api/snapshot'),
+        ]);
         if (!sessionResponse.ok) throw new Error('无法建立本地安全会话。');
-        const snapshotResponse = await fetch('/api/snapshot');
-        const body = (await snapshotResponse.json()) as SnapshotResponse;
+        const [session, snapshotBody] = await Promise.all([
+          sessionResponse.json() as Promise<{ csrfToken: string }>,
+          readSnapshotResponse(snapshotResponse),
+        ]);
         if (!active) return;
-        setSnapshot(body);
-        setMode(body.mode === 'ready' ? 'ready' : body.mode);
+        setCsrfToken(session.csrfToken);
+        setAppState((current) => commitSnapshotState(current, snapshotBody));
       } catch {
-        if (active) setMode('error');
+        if (active) setAppState((current) => ({ ...current, mode: 'error' }));
       }
     };
     void load();
     return () => {
       active = false;
     };
-  }, []);
+  }, [refreshSnapshot]);
 
   const beanCount = snapshot?.data?.beans.length ?? 0;
   const drinkingCount = snapshot?.data?.drinkingRecords.length ?? 0;
+  const beginEditing = (kind: 'purchase' | 'drinking', id: string) => {
+    if ((purchaseDirty || drinkingDirty) && !window.confirm('当前记录还有未保存修改，确定切换到另一条记录吗？')) return;
+    setEditingRecord({ kind, id });
+    window.setTimeout(() => document.getElementById('record-studio')?.scrollIntoView({ behavior: 'auto' }), 0);
+  };
+  const createPurchaseForBean = (beanId: string): boolean => {
+    if ((purchaseDirty || drinkingDirty) && !window.confirm('当前记录还有未保存修改，确定开始一笔新购买吗？')) return false;
+    setEditingRecord(null);
+    setPurchaseDraft((current) => advancePurchaseDraft(current, beanId));
+    window.setTimeout(() => {
+      document.getElementById('record-studio')?.scrollIntoView({ behavior: 'auto' });
+      document.querySelector<HTMLElement>('[aria-label="购买日期"]')?.focus();
+    }, 0);
+    return true;
+  };
 
   return (
     <div className="app-shell">
@@ -67,10 +95,13 @@ export function App() {
               从四月的旧表格继续。这里会成为你的收藏陈列馆、购买账本和品鉴记录，而不是另一张越填越累的表。
             </p>
             <div className="hero-actions" aria-label="首要操作">
-              <button type="button" disabled>
+              <button type="button" onClick={() => document.getElementById('catch-up-studio')?.scrollIntoView({
+                behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+              })}>
                 开始补评价
               </button>
-              <span>迁移工具将在下一实施单元开放</span>
+              <button className="hero-link" type="button" onClick={() => document.getElementById('import-studio')?.scrollIntoView({ behavior: 'auto' })}>迁移四月表格</button>
+              <span>只需品牌、豆名和真实饮用日期就能开始</span>
             </div>
           </div>
 
@@ -114,6 +145,26 @@ export function App() {
           )}
           {mode === 'error' && <p>无法连接本地服务。请确认服务已经启动后重试。</p>}
         </section>
+
+        {mode === 'ready' && csrfToken && (
+          <>
+            <CatchUpQueue
+              csrfToken={csrfToken}
+              snapshotRevision={snapshot?.data?.dataRevision ?? 0}
+              onDataChanged={refreshSnapshot}
+            />
+            {snapshot?.data && <BeanGallery data={snapshot.data} csrfToken={csrfToken} onDataChanged={refreshSnapshot} onCreatePurchase={createPurchaseForBean} />}
+            {snapshot?.data && <RecommendationView data={snapshot.data} csrfToken={csrfToken} onDataChanged={refreshSnapshot} onCreatePurchase={createPurchaseForBean} />}
+            {snapshot?.data && <CollectionWizard data={snapshot.data} csrfToken={csrfToken} onDataChanged={refreshSnapshot} />}
+            {snapshot?.data && <section className="record-studio" id="record-studio" aria-labelledby="record-studio-title">
+              <div className="record-studio__heading"><div><p className="section-kicker">DAILY LEDGER / 02</p><h2 id="record-studio-title">购买和饮用，分开写清楚。</h2></div><p>购买可以有多支豆；每次饮用只选一支，也可以不关联历史购买项。</p></div>
+              <div className="record-editors"><PurchaseEditor key={purchaseEditorKey(editingRecord, purchaseDraft)} csrfToken={csrfToken} data={snapshot.data} preselectedBeanId={purchaseDraft.beanId} initialPurchase={editingRecord?.kind === 'purchase' ? snapshot.data.purchases.find((item) => item.id === editingRecord.id) : undefined} onDataChanged={refreshSnapshot} onSaved={() => { setEditingRecord(null); setPurchaseDraft((current) => ({ ...current, beanId: null })); }} onDirtyChange={setPurchaseDirty} onCancelEdit={() => { setEditingRecord(null); setPurchaseDraft((current) => ({ ...current, beanId: null })); }} /><DrinkingEditor key={editingRecord?.kind === 'drinking' ? editingRecord.id : 'new-drinking'} csrfToken={csrfToken} data={snapshot.data} initialRecord={editingRecord?.kind === 'drinking' ? snapshot.data.drinkingRecords.find((item) => item.id === editingRecord.id) : undefined} onDataChanged={refreshSnapshot} onSaved={() => setEditingRecord(null)} onDirtyChange={setDrinkingDirty} onCancelEdit={() => setEditingRecord(null)} /></div>
+              <RecordTimeline csrfToken={csrfToken} data={snapshot.data} onDataChanged={refreshSnapshot} onEditPurchase={(id) => beginEditing('purchase', id)} onEditDrinking={(id) => beginEditing('drinking', id)} />
+            </section>}
+            <ImportWizard csrfToken={csrfToken} onCommitted={refreshSnapshot} />
+          </>
+        )}
+        {mode === 'recovery' && csrfToken && <RecoveryPanel csrfToken={csrfToken} onRecovered={refreshSnapshot} />}
       </main>
 
       <footer>
@@ -123,4 +174,3 @@ export function App() {
     </div>
   );
 }
-

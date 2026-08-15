@@ -1,4 +1,4 @@
-import { CURRENT_SCHEMA_VERSION, CoffeeDataSchema, type CoffeeData } from '../../domain/schema.js';
+import { CURRENT_SCHEMA_VERSION, CoffeeDataSchema, ImportBatchSchema, type CoffeeData } from '../../domain/schema.js';
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(readonly schemaVersion: number) {
@@ -23,6 +23,38 @@ export function migrateRawDocument(raw: unknown): CoffeeData {
     throw new Error(`暂不支持从数据版本 ${String(version)} 升级。`);
   }
 
-  return CoffeeDataSchema.parse(raw);
-}
+  const compatible = structuredClone(raw) as Record<string, unknown>;
+  const drinkingRecords = Array.isArray(compatible.drinkingRecords) ? compatible.drinkingRecords : [];
+  const legacyReviewScores = Array.isArray(compatible.legacyReviewScores) ? [...compatible.legacyReviewScores] : [];
+  for (const record of drinkingRecords) {
+    if (!record || typeof record !== 'object') continue;
+    for (const key of ['americanoReview', 'milkReview'] as const) {
+      const review = Reflect.get(record, key);
+      if (review && typeof review === 'object' && Reflect.get(review, 'state') !== 'reviewed') {
+        const score = Reflect.get(review, 'score');
+        if (typeof score === 'number') {
+          legacyReviewScores.push({
+            drinkingRecordId: String(Reflect.get(record, 'id') ?? ''),
+            dimension: key,
+            state: String(Reflect.get(review, 'state') ?? 'unknown'),
+            score,
+          });
+        }
+        Reflect.set(review, 'score', null);
+      }
+    }
+  }
+  compatible.legacyReviewScores = legacyReviewScores;
 
+  const importBatches = Array.isArray(compatible.importBatches) ? compatible.importBatches : [];
+  const validImportBatches: unknown[] = [];
+  const legacyImportBatches = Array.isArray(compatible.legacyImportBatches) ? [...compatible.legacyImportBatches] : [];
+  for (const batch of importBatches) {
+    if (ImportBatchSchema.safeParse(batch).success) validImportBatches.push(batch);
+    else legacyImportBatches.push(batch);
+  }
+  compatible.importBatches = validImportBatches;
+  compatible.legacyImportBatches = legacyImportBatches;
+
+  return CoffeeDataSchema.parse(compatible);
+}

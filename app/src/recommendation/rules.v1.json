@@ -1,0 +1,10 @@
+{
+  "version": "local-content-v1",
+  "weights": {
+    "explicit": 45,
+    "brew": 20,
+    "flavor": 20,
+    "price": 10,
+    "interest": 5
+  }
+}

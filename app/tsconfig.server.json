@@ -16,7 +16,6 @@
     "composite": true,
     "types": ["node"]
   },
-  "include": ["src/server", "src/domain", "src/storage"],
+  "include": ["src/server", "src/domain", "src/lib", "src/storage", "src/import", "src/recommendation", "src/recommendation/*.json", "src/collectors", "src/exports"],
   "exclude": ["tests", "dist"]
 }
-

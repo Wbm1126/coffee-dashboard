@@ -1,0 +1,1 @@
+export const IMPORT_COMPRESSED_BYTES_LIMIT = 25 * 1024 * 1024;
