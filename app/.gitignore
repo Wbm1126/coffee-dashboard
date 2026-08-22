@@ -4,6 +4,9 @@
 /coverage/
 /test-results/
 /playwright-report/
+/release/
+/launcher/bin/
+/launcher/obj/
 *.tsbuildinfo
 
 # Local runtime data and exports

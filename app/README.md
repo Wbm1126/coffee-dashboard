@@ -15,6 +15,10 @@ v1.0 支持：
 
 ## 快速开始
 
+普通 Windows 用户可直接从 [GitHub Releases](https://github.com/Wbm1126/coffee-dashboard/releases) 下载名称形如 `CoffeeDashboard-v版本号-win-x64.exe` 的最新文件，双击启动，无需安装 Node.js。数据保存在 `%LOCALAPPDATA%\CoffeeDashboard\data`。
+
+源码运行与开发方式如下：
+
 要求：Windows、macOS 或 Linux；Node.js `>=22.12 <27`；npm。
 
 从仓库根目录执行：

@@ -1,6 +1,6 @@
 {
   "name": "coffee-bean-dashboard",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -22,6 +22,7 @@
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
     "build": "npm run build:client && npm run build:server",
+    "release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-release.ps1",
     "smoke:production": "tsx scripts/production-smoke.ts",
     "start": "node dist/server/start.js",
     "verify": "npm run lint && npm run typecheck && npm run test:unit && npm run test:integration && npm run build && npm run smoke:production"

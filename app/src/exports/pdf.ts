@@ -2,7 +2,11 @@ import { chromium } from 'playwright';
 import type { ExportReport } from './report-model.js';
 const escapeHtml = (value: string) => value.replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]!);
 export async function renderPdf(report: ExportReport): Promise<Buffer> {
-  const browser = await chromium.launch({ headless: true });
+  const configuredExecutable = process.env.COFFEE_DASHBOARD_CHROMIUM_PATH?.trim();
+  const browser = await chromium.launch({
+    headless: true,
+    ...(configuredExecutable ? { executablePath: configuredExecutable } : {}),
+  });
   try {
     const page = await browser.newPage();
     await page.route('**/*', (route) => route.abort());
