@@ -157,6 +157,21 @@ describe('Schema v1→v2 迁移', () => {
     expect(JSON.parse(await readFile(repository.dataFile, 'utf8'))).toMatchObject({ schemaVersion: 2 });
   });
 
+  it('写队列任务内撞上 v1 磁盘时内联迁移，不形成循环等待', async () => {
+    // 不经 initialize 直接 mutate：队列闭包里的 read 会发现磁盘仍是 v1；
+    // 若迁移被再次挂到 writeQueue 尾部，将等待当前任务完成而永久挂起。
+    const repository = await repositoryWithRawDocument(v1Document());
+
+    const next = await repository.mutate(12, (draft) => {
+      draft.preferenceProfile.brewMode = 'milk';
+    });
+
+    expect(next.schemaVersion).toBe(2);
+    expect(next.dataRevision).toBe(13);
+    expect(next.preferenceProfile.brewMode).toBe('milk');
+    expect(JSON.parse(await readFile(repository.dataFile, 'utf8'))).toMatchObject({ schemaVersion: 2, dataRevision: 13 });
+  });
+
   it('恢复合法的 v1 备份时自动迁移为 v2', async () => {
     const repository = await repositoryWithRawDocument(v1Document());
     await repository.initialize();
