@@ -57,7 +57,7 @@ interface ChatRequestInit {
   body: string;
 }
 
-import { CollectionFieldsSchema, SearchCandidateSchema, type CollectionCandidate, type SearchCandidate } from './types.js';
+import { COLLECTION_FIELD_KEYS, CollectionFieldsSchema, SearchCandidateSchema, type CollectionCandidate, type SearchCandidate } from './types.js';
 
 const SEARCH_SYSTEM = '你是咖啡豆商品搜索助手。只输出 JSON 数组，不要输出任何解释文字。数组元素形如 {"title":"商品标题","url":"商品页链接","snippet":"一句话摘要"}，最多 5 条，url 必须是 http(s) 完整链接。';
 
@@ -90,7 +90,16 @@ export async function extractFieldsWithLlm(chat: ChatFn, config: LlmConfig, inpu
   const content = await chat(config, { system: EXTRACT_SYSTEM, user: input.text, timeoutMs: 20_000 });
   const parsed = extractJsonBlock(content);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-  const checked = CollectionFieldsSchema.safeParse(parsed);
+  const record = parsed as Record<string, unknown>;
+  // 逐字段校验：LLM 单个字段越界只丢弃该字段，不牵连其余有效内容。
+  const cleaned: Record<string, unknown> = {};
+  const partialSchema = CollectionFieldsSchema.partial();
+  for (const key of COLLECTION_FIELD_KEYS) {
+    if (!(key in record)) continue;
+    const single = partialSchema.safeParse({ [key]: record[key] });
+    if (single.success) Object.assign(cleaned, single.data);
+  }
+  const checked = CollectionFieldsSchema.safeParse(cleaned);
   if (!checked.success || !checked.data.beanName) return null;
   const fields = checked.data;
   return {
