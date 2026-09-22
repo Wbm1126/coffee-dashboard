@@ -1,12 +1,19 @@
 import { access, mkdir } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { resolveDataDir } from '../src/server/data-dir.js';
 
-const scriptDir = dirname(fileURLToPath(import.meta.url));
-const appRoot = resolve(scriptDir, '..');
-const dataDir = resolve(appRoot, '..', 'data');
+// 与服务端共用同一套解析：环境变量 → app/.data-dir → 仓库 data/。
+let dataDir = '';
+let dataDirSource = '';
+let resolveError: unknown = null;
+try {
+  const resolution = await resolveDataDir();
+  dataDir = resolution.dataDir;
+  dataDirSource = resolution.source;
+} catch (error) {
+  resolveError = error;
+}
 
 const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
 const nodeMajor = Number.parseInt(process.versions.node.split('.')[0] ?? '0', 10);
@@ -16,12 +23,16 @@ checks.push({
   detail: `${process.versions.node}（推荐 24 LTS，最低 22.12）`,
 });
 
-try {
-  await mkdir(dataDir, { recursive: true });
-  await access(dataDir, constants.R_OK | constants.W_OK);
-  checks.push({ name: '数据目录', ok: true, detail: dataDir });
-} catch (error) {
-  checks.push({ name: '数据目录', ok: false, detail: String(error) });
+if (resolveError) {
+  checks.push({ name: '数据目录', ok: false, detail: String(resolveError) });
+} else {
+  try {
+    await mkdir(dataDir, { recursive: true });
+    await access(dataDir, constants.R_OK | constants.W_OK);
+    checks.push({ name: '数据目录', ok: true, detail: `${dataDir}（来源: ${dataDirSource}）` });
+  } catch (error) {
+    checks.push({ name: '数据目录', ok: false, detail: String(error) });
+  }
 }
 
 try {

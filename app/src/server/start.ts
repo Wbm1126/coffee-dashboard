@@ -1,12 +1,9 @@
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
+import { appRoot, resolveDataDir } from './data-dir.js';
 import { JsonRepository } from '../storage/json-repository.js';
 import { buildApp } from './app.js';
 
-const sourceDir = dirname(fileURLToPath(import.meta.url));
-const coffeeRoot = resolve(sourceDir, '..', '..', '..');
-const appRoot = resolve(coffeeRoot, 'app');
-const repository = new JsonRepository(resolve(process.env.COFFEE_DASHBOARD_DATA_DIR ?? resolve(coffeeRoot, 'data')));
+const { dataDir } = await resolveDataDir();
 const port = Number.parseInt(process.env.COFFEE_DASHBOARD_PORT ?? '4173', 10);
 const clientPort = Number.parseInt(process.env.COFFEE_DASHBOARD_CLIENT_PORT ?? '5173', 10);
 const devOrigins =
@@ -15,13 +12,13 @@ const devOrigins =
     : [];
 
 const app = await buildApp({
-  repository,
+  repository: new JsonRepository(dataDir),
   staticRoot: resolve(appRoot, 'dist', 'client'),
   allowedOrigins: devOrigins,
 });
 
 await app.listen({ host: '127.0.0.1', port });
-process.stdout.write(`豆迹已启动：http://127.0.0.1:${port}\n`);
+process.stdout.write(`豆迹已启动：http://127.0.0.1:${port}\n数据目录: ${dataDir}\n`);
 
 const close = async () => {
   await app.close();
