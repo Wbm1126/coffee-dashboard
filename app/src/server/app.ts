@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { JsonRepository } from '../storage/json-repository.js';
 import { installLocalSecurity } from './local-security.js';
 import { registerImportRoutes } from './routes/import.js';
+import { registerTableImportRoutes } from './routes/table-import.js';
 import { registerDrinkingRoutes } from './routes/drinking.js';
 import { registerPurchaseRoutes } from './routes/purchases.js';
 import { registerBeanRoutes } from './routes/beans.js';
@@ -59,6 +60,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   });
 
   registerImportRoutes(app, options.repository);
+  registerTableImportRoutes(app, options.repository);
   registerDrinkingRoutes(app, options.repository);
   registerPurchaseRoutes(app, options.repository);
   registerBeanRoutes(app, options.repository);
