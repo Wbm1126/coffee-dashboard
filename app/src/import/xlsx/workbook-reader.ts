@@ -103,6 +103,8 @@ async function preflight(bytes: Uint8Array, deadline: number): Promise<void> {
   });
 }
 
+export { preflight as preflightWorkbook };
+
 interface WorkerSuccess<T> { ok: true; rows: T }
 interface WorkerFailure { ok: false; code: string; message: string }
 

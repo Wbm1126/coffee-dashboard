@@ -1,31 +1,31 @@
-import ExcelJS, { type Cell } from 'exceljs';
+import ExcelJS from 'exceljs';
 import { WORKBOOK_LIMITS, WorkbookImportError } from '../xlsx/workbook-policy.js';
+import { preflightWorkbook } from '../xlsx/workbook-reader.js';
 
 export interface SourceCell {
   rawValue: unknown;
   displayedText: string;
   numberFormat: string | null;
   location: string;
+  /** 1 起始的真实列号（xlsx 由 cell.col/address 得出，csv 即物理列序）。 */
+  column: number;
+}
+
+export interface TableDataRow {
+  /** 工作表中的真实行号（1 起始，含表头行计数），与单元格 location 一致。 */
+  rowNumber: number;
+  cells: SourceCell[];
 }
 
 export interface TableSheet {
   name: string;
   rowCount: number;
-  rows: SourceCell[][];
+  rows: TableDataRow[];
 }
 
 export interface TableDocument {
   fileName: string;
   sheets: TableSheet[];
-}
-
-function sourceCell(cell: Cell): SourceCell {
-  return {
-    rawValue: cell.value,
-    displayedText: cell.text,
-    numberFormat: cell.numFmt || null,
-    location: `${cell.worksheet.name}!${cell.address}`,
-  };
 }
 
 export function isXlsxName(name: string): boolean {
@@ -36,9 +36,10 @@ export function isCsvName(name: string): boolean {
   return name.toLowerCase().endsWith('.csv');
 }
 
-// XLSX：沿用专用导入器的安全限制（大小/宏/公式/单元格数），但读取全部工作表为通用表格。
+// XLSX：复用专用导入器的全部安全检查（压缩大小/ZIP 条目/展开量/宏/外部链接/公式/单元格数）。
 export async function readXlsxTable(fileName: string, bytes: Uint8Array): Promise<TableDocument> {
   const deadline = Date.now() + WORKBOOK_LIMITS.timeoutMs;
+  await preflightWorkbook(bytes, deadline);
   const workbook = new ExcelJS.Workbook();
   try {
     await workbook.xlsx.load(Uint8Array.from(bytes).buffer);
@@ -51,9 +52,8 @@ export async function readXlsxTable(fileName: string, bytes: Uint8Array): Promis
   const sheets: TableSheet[] = [];
   for (const worksheet of workbook.worksheets) {
     let nonEmpty = 0;
-    const rows: SourceCell[][] = [];
+    const rowByNumber = new Map<number, SourceCell[]>();
     worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-      const cells: SourceCell[] = [];
       row.eachCell({ includeEmpty: false }, (cell) => {
         if (Date.now() > deadline) throw new WorkbookImportError('timeout', '工作簿解析超时。');
         nonEmpty += 1;
@@ -71,34 +71,79 @@ export async function readXlsxTable(fileName: string, bytes: Uint8Array): Promis
         const fromAddress = cell.address.match(/^([A-Z]+)(\d+)$/i)?.[1];
         const columnFromAddress = (fromAddress ?? '').split('').reduce((acc, ch) => acc * 26 + (ch.toUpperCase().charCodeAt(0) - 64), 0);
         const column = typeof cell.col === 'number' ? cell.col : columnFromAddress;
-        cells[column - 1] = sourceCell(cell);
+        const cells = rowByNumber.get(rowNumber) ?? [];
+        cells[column - 1] = {
+          rawValue: cell.value,
+          displayedText: cell.text,
+          numberFormat: cell.numFmt || null,
+          location: `${worksheet.name}!${cell.address}`,
+          column,
+        };
+        rowByNumber.set(rowNumber, cells);
       });
-      if (cells.length > 0) rows[rowNumber - 1] = cells;
     });
-    // 去掉整行皆空的占位行；行内保留稀疏空洞（访问为 undefined，视为空单元格）。
-    sheets.push({ name: worksheet.name, rowCount: worksheet.rowCount, rows: rows.filter((cells) => Array.isArray(cells)) });
+    const rows = [...rowByNumber.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([rowNumber, cells]) => ({ rowNumber, cells }));
+    sheets.push({ name: worksheet.name, rowCount: worksheet.rowCount, rows });
   }
   return { fileName, sheets };
 }
 
-// CSV：RFC4180（逗号/双引号/引号转义/CRLF），BOM 剥离；所有单元格按纯文本处理，绝不执行其中内容。
+// CSV：RFC4180（逗号/双引号/引号转义/CRLF）；所有单元格按纯文本处理，绝不执行其中内容。
+// 编码：优先 UTF-8（fatal 校验），失败回退 GB18030（中文 Excel 默认导出编码），避免静默乱码入库。
 export function readCsvTable(fileName: string, bytes: Uint8Array): TableDocument {
-  let text = Buffer.from(bytes).toString('utf8');
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    try {
+      text = new TextDecoder('gb18030').decode(bytes);
+    } catch {
+      throw new WorkbookImportError('charset_invalid', 'CSV 编码无法识别，请另存为 UTF-8 后重试。');
+    }
+  }
   if (text.startsWith('\uFEFF')) text = text.slice(1);
-  const rows: string[][] = [];
+
+  const deadline = Date.now() + WORKBOOK_LIMITS.timeoutMs;
+  const maxRows = Math.floor(WORKBOOK_LIMITS.nonEmptyCellsPerSheet / 8);
+  const rows: TableDataRow[] = [];
   let row: string[] = [];
   let field = '';
   let inQuotes = false;
+  let rowIndex = 0;
+
   const pushField = () => {
+    if (Buffer.byteLength(field, 'utf8') > WORKBOOK_LIMITS.stringBytes) {
+      throw new WorkbookImportError('string_limit', 'CSV 含超过 64KB 的字段，已拒绝导入。');
+    }
     row.push(field);
     field = '';
   };
   const pushRow = () => {
     pushField();
-    if (row.length > 1 || row[0]!.trim() !== '') rows.push(row);
+    const hasContent = row.length > 1 || (row[0] ?? '').trim() !== '';
+    if (hasContent) {
+      rowIndex += 1;
+      rows.push({
+        rowNumber: rowIndex,
+        cells: row.map((value, columnIndex) => ({
+          rawValue: value,
+          displayedText: value,
+          numberFormat: null,
+          location: `${fileName}#${rowIndex}C${columnIndex + 1}`,
+          column: columnIndex + 1,
+        })),
+      });
+    }
     row = [];
+    if (rows.length > maxRows) throw new WorkbookImportError('cell_limit', 'CSV 行数超过安全限制。');
   };
+
   for (let index = 0; index < text.length; index += 1) {
+    if ((index & 0xFFF) === 0 && Date.now() > deadline) {
+      throw new WorkbookImportError('timeout', 'CSV 解析超时，已停止。');
+    }
     const character = text[index]!;
     if (inQuotes) {
       if (character === '"') {
@@ -117,20 +162,10 @@ export function readCsvTable(fileName: string, bytes: Uint8Array): TableDocument
     } else field += character;
   }
   if (field !== '' || row.length > 0) pushRow();
-  if (rows.length > WORKBOOK_LIMITS.nonEmptyCellsPerSheet / 8) {
-    throw new WorkbookImportError('cell_limit', 'CSV 行数超过安全限制。');
-  }
-  const cells: SourceCell[][] = rows.map((values, rowIndex) =>
-    values.map((value, columnIndex) => ({
-      rawValue: value,
-      displayedText: value,
-      numberFormat: null,
-      location: `${fileName}#${rowIndex + 1}C${columnIndex + 1}`,
-    })),
-  );
+
   return {
     fileName,
-    sheets: [{ name: fileName, rowCount: cells.length, rows: cells }],
+    sheets: [{ name: fileName, rowCount: rows.length, rows }],
   };
 }
 

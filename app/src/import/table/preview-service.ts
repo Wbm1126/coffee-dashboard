@@ -5,7 +5,7 @@ import type { CoffeeData } from '../../domain/schema.js';
 import { normalizeText } from '../xlsx/normalizers.js';
 import { WorkbookImportError } from '../xlsx/workbook-policy.js';
 import { sha256 } from '../../lib/sha256.js';
-import { readTable, type SourceCell } from './table-document.js';
+import { readTable, type TableDataRow } from './table-document.js';
 import { proposeMapping, resolveMapping, TABLE_FIELD_LABELS, type TableField, type TableMapping } from './field-map.js';
 import { matchTableRows, type TableConflict, type TableItem } from './generic-matcher.js';
 
@@ -65,18 +65,18 @@ function decodeUpload(upload: z.infer<typeof TABLE_UPLOAD_SCHEMA>): TableUpload 
   return { name: upload.name, bytes };
 }
 
-// 表头行候选：第一个含 ≥2 个非空文本单元格的行；未找到时回退第 1 行。
-function detectHeaderRow(rows: SourceCell[][]): number {
-  for (let index = 0; index < Math.min(rows.length, 10); index += 1) {
-    const filled = rows[index]!.filter((cell) => normalizeText(cell.displayedText) !== null);
-    if (filled.length >= 2) return index + 1;
+// 表头行候选：第一个含 ≥2 个非空文本单元格的行；未找到时回退第 1 行。返回真实行号。
+function detectHeaderRow(rows: TableDataRow[]): number {
+  for (const row of rows.slice(0, 10)) {
+    const filled = row.cells.filter((cell) => normalizeText(cell.displayedText) !== null);
+    if (filled.length >= 2) return row.rowNumber;
   }
   return 1;
 }
 
-function headerCells(rows: SourceCell[][], headerRow: number): string[] {
-  const cells = rows[headerRow - 1] ?? [];
-  const width = cells.reduce((max, cell) => Math.max(max, cell.location.lastIndexOf('C') >= 0 ? Number(cell.location.split('C').pop()) : 0), 0);
+function headerCells(rows: TableDataRow[], headerRow: number): string[] {
+  const cells = rows.find((row) => row.rowNumber === headerRow)?.cells ?? [];
+  const width = cells.reduce((max, cell) => Math.max(max, cell.column), 0);
   const headers: string[] = [];
   for (let column = 1; column <= Math.max(width, cells.length); column += 1) {
     headers.push(cells[column - 1]?.displayedText?.trim() ?? '');
@@ -84,10 +84,9 @@ function headerCells(rows: SourceCell[][], headerRow: number): string[] {
   return headers;
 }
 
-function dataRows(rows: SourceCell[][], headerRow: number): Array<{ rowNumber: number; cells: SourceCell[] }> {
+function dataRows(rows: TableDataRow[], headerRow: number): TableDataRow[] {
   return rows
-    .slice(headerRow)
-    .map((cells, index) => ({ rowNumber: headerRow + index + 1, cells }))
+    .filter((row) => row.rowNumber > headerRow)
     .filter((row) => row.cells.some((cell) => normalizeText(cell.displayedText) !== null));
 }
 

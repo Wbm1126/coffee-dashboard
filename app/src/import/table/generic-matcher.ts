@@ -18,6 +18,7 @@ import {
   type LegacyStatus,
 } from '../xlsx/normalizers.js';
 import type { SourceCell } from './table-document.js';
+import { WorkbookImportError } from '../xlsx/workbook-policy.js';
 import type { TableField, TableMapping } from './field-map.js';
 
 export type TableImportCategory = 'new' | 'merge' | 'possible_duplicate' | 'conflict' | 'unrecognized';
@@ -192,46 +193,51 @@ function buildBeanFacts(
     });
   }
 
-  const bean = CoffeeBeanSchema.parse({
-    id: existing?.id ?? randomUUID(),
-    brandId: existing?.brandId ?? null,
-    name: existing?.name ?? beanName,
-    normalizedKey: key,
-    roastLevel: normalizeRoastLevel(get('roastLevel')?.displayedText ?? '') ?? existing?.roastLevel ?? null,
-    process: text(get('process')) ?? existing?.process ?? null,
-    flavorNotes: flavorNotes.length > 0 ? flavorNotes : existing?.flavorNotes ?? [],
-    followedAt: existing?.followedAt ?? null,
-    archivedAt: existing?.archivedAt ?? null,
-    isDraft: existing?.isDraft ?? false,
-    legacyStatusRaw: text(get('status')) ?? existing?.legacyStatusRaw ?? null,
-    legacyPersonalScoreRaw: text(get('personalScore')) ?? existing?.legacyPersonalScoreRaw ?? null,
-    importedFacts: {
-      overallScoreRaw: text(get('overallScore')) ?? facts?.overallScoreRaw ?? null,
-      preferenceMatchRaw: text(get('preferenceMatch')) ?? facts?.preferenceMatchRaw ?? null,
-      recommendationRaw: text(get('recommendation')) ?? facts?.recommendationRaw ?? null,
-      referencePrice: price === null ? facts?.referencePrice ?? null : { amount: price, currency: 'CNY' },
-      pricePerGram: pricePerGram ?? facts?.pricePerGram ?? null,
-      packageGrams: packageGrams ?? facts?.packageGrams ?? null,
-      originOrVariety: text(get('originOrVariety')) ?? facts?.originOrVariety ?? null,
-      officialFlavorDescription: text(get('officialFlavorDescription')) ?? facts?.officialFlavorDescription ?? null,
-      americanoPerformance: text(get('americanoPerformance')) ?? facts?.americanoPerformance ?? null,
-      milkPerformance: text(get('milkPerformance')) ?? facts?.milkPerformance ?? null,
-      suitableScenes: suitableScenes.length > 0 ? suitableScenes : facts?.suitableScenes ?? [],
-      legacyNote: text(get('note')) ?? facts?.legacyNote ?? null,
-      legacyScoreBasisRaw: text(get('scoreBasis')) ?? facts?.legacyScoreBasisRaw ?? null,
-    },
-    provenance: structuredClone(existing?.provenance ?? {}),
-    createdAt: existing?.createdAt ?? now,
-    updatedAt: now,
-  });
+  let bean: CoffeeBean;
+  try {
+    bean = CoffeeBeanSchema.parse({
+      id: existing?.id ?? randomUUID(),
+      brandId: existing?.brandId ?? null,
+      name: existing?.name ?? beanName,
+      normalizedKey: key,
+      roastLevel: normalizeRoastLevel(get('roastLevel')?.displayedText ?? '') ?? existing?.roastLevel ?? null,
+      process: text(get('process')) ?? existing?.process ?? null,
+      flavorNotes: flavorNotes.length > 0 ? flavorNotes : existing?.flavorNotes ?? [],
+      followedAt: existing?.followedAt ?? null,
+      archivedAt: existing?.archivedAt ?? null,
+      isDraft: existing?.isDraft ?? false,
+      legacyStatusRaw: text(get('status')) ?? existing?.legacyStatusRaw ?? null,
+      legacyPersonalScoreRaw: text(get('personalScore')) ?? existing?.legacyPersonalScoreRaw ?? null,
+      importedFacts: {
+        overallScoreRaw: text(get('overallScore')) ?? facts?.overallScoreRaw ?? null,
+        preferenceMatchRaw: text(get('preferenceMatch')) ?? facts?.preferenceMatchRaw ?? null,
+        recommendationRaw: text(get('recommendation')) ?? facts?.recommendationRaw ?? null,
+        referencePrice: price === null ? facts?.referencePrice ?? null : { amount: price, currency: 'CNY' },
+        pricePerGram: pricePerGram ?? facts?.pricePerGram ?? null,
+        packageGrams: packageGrams ?? facts?.packageGrams ?? null,
+        originOrVariety: text(get('originOrVariety')) ?? facts?.originOrVariety ?? null,
+        officialFlavorDescription: text(get('officialFlavorDescription')) ?? facts?.officialFlavorDescription ?? null,
+        americanoPerformance: text(get('americanoPerformance')) ?? facts?.americanoPerformance ?? null,
+        milkPerformance: text(get('milkPerformance')) ?? facts?.milkPerformance ?? null,
+        suitableScenes: suitableScenes.length > 0 ? suitableScenes : facts?.suitableScenes ?? [],
+        legacyNote: text(get('note')) ?? facts?.legacyNote ?? null,
+        legacyScoreBasisRaw: text(get('scoreBasis')) ?? facts?.legacyScoreBasisRaw ?? null,
+      },
+      provenance: structuredClone(existing?.provenance ?? {}),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    });
+  } catch {
+    throw new WorkbookImportError('row_invalid', `第 ${rowNumber} 行「${beanName}」内容超出字段约束，无法导入。`);
+  }
 
-  const provenanceSources: Array<[TableField, SourceCell | undefined]> = TABLE_PROVENANCE_FIELDS.map((field) => [field, get(field)]);
-  for (const [field, cell] of provenanceSources) {
+  // provenance 记录来源证据；同一来源同一位置不重复追加，避免反复导入无限膨胀。
+  for (const field of TABLE_PROVENANCE_FIELDS) {
+    const cell = get(field);
     if (!cell || !cell.displayedText.trim()) continue;
-    bean.provenance[PROVENANCE_KEY[field]] = [
-      ...(bean.provenance[PROVENANCE_KEY[field]] ?? []),
-      evidence(sourceId, now, cell),
-    ];
+    const entries = bean.provenance[PROVENANCE_KEY[field]] ?? [];
+    if (entries.some((entry) => entry.sourceId === sourceId && entry.location === cell.location)) continue;
+    bean.provenance[PROVENANCE_KEY[field]] = [...entries, evidence(sourceId, now, cell)];
   }
 
   // 字段冲突：仅在与库内已有豆（同键）真实不一致时出现，二选一必须用户裁决。
@@ -381,14 +387,24 @@ export function matchTableRows(
       });
       continue;
     }
-    BrandSchema.parse({
-      id: randomUUID(), name: brandName, aliases: [], archivedAt: null,
-      createdAt: timestamp, updatedAt: timestamp,
-    });
+    // 单元格内容可能超出字段约束（过长品牌名、越界数值等）：转成带行号的 422，而非裸 ZodError 500。
+    try {
+      BrandSchema.parse({
+        id: randomUUID(), name: brandName, aliases: [], archivedAt: null,
+        createdAt: timestamp, updatedAt: timestamp,
+      });
+    } catch {
+      throw new WorkbookImportError('row_invalid', `第 ${first.rowNumber} 行品牌「${brandName}」内容超出字段约束，无法导入。`);
+    }
     brandNames.add(brandName);
 
     const existing = existingByKey.get(key);
     const facts = buildBeanFacts(key, brandName, beanName, first.cells, first.rowNumber, mapping, existing, sourceId, timestamp);
+    // 未喝行不产生评价，状态需按行统计（含 untried），而非按评价统计。
+    for (const groupRow of group) {
+      const rowStatus = normalizeStatus(cellAt(groupRow.cells, mapping, 'status')?.displayedText ?? '');
+      if (rowStatus !== 'unknown') statusCounts[rowStatus] += 1;
+    }
     // 同豆多行：第一行提供豆事实，其余行只贡献评价，评价不因去重丢失。
     for (const extra of group.slice(1)) {
       const extraScore = parseScore(cellAt(extra.cells, mapping, 'personalScore'));
@@ -404,7 +420,6 @@ export function matchTableRows(
       }
     }
     for (const evaluation of facts.evaluations) {
-      if (evaluation.status !== 'unknown') statusCounts[evaluation.status] += 1;
       if (evaluation.overallScore !== null || evaluation.personalScoreRaw !== null) legacyScores += 1;
     }
 

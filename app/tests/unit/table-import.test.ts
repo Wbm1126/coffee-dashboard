@@ -42,20 +42,28 @@ describe('通用表格字段映射', () => {
 });
 
 describe('CSV 表格读取', () => {
-  it('解析引号、逗号、引号转义与 CRLF，并剥离 BOM', () => {
+  it('解析引号、逗号、引号转义与 CRLF，并剥离 BOM；行号与列号保持真实位置', () => {
     const csv = '\uFEFF品牌,产品,备注\n"铁壶","黑猫","含,逗号"\r\n铁壶,疣猪,"含""引号"""';
     const document = readCsvTable('beans.csv', new TextEncoder().encode(csv));
     expect(document.sheets).toHaveLength(1);
     const rows = document.sheets[0]!.rows;
     expect(rows).toHaveLength(3);
-    expect(rows[0]!.map((cell) => cell.displayedText)).toEqual(['品牌', '产品', '备注']);
-    expect(rows[1]![2]!.displayedText).toBe('含,逗号');
-    expect(rows[2]![2]!.displayedText).toBe('含"引号"');
-    expect(rows[1]![0]!.location).toBe('beans.csv#2C1');
+    expect(rows[0]!.rowNumber).toBe(1);
+    expect(rows[0]!.cells.map((cell) => cell.displayedText)).toEqual(['品牌', '产品', '备注']);
+    expect(rows[1]!.cells[2]!.displayedText).toBe('含,逗号');
+    expect(rows[1]!.cells[0]!.column).toBe(1);
+    expect(rows[2]!.cells[2]!.displayedText).toBe('含"引号"');
+    expect(rows[2]!.cells[0]!.location).toBe('beans.csv#3C1');
   });
 
   it('空行不产生数据行', () => {
     const document = readCsvTable('beans.csv', new TextEncoder().encode('品牌,产品\n\n铁壶,黑猫\n'));
     expect(document.sheets[0]!.rows).toHaveLength(2);
+  });
+
+  it('非 UTF-8 字节回退 GB18030 解码，不静默乱码', () => {
+    // 「咖」的 GB18030 编码为 0xBF 0xA7，这两个字节单独看都不是合法 UTF-8 序列。
+    const document = readCsvTable('beans.csv', new Uint8Array([0xBF, 0xA7]));
+    expect(document.sheets[0]!.rows[0]!.cells[0]!.displayedText).toBe('咖');
   });
 });

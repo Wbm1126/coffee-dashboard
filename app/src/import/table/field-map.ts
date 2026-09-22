@@ -130,6 +130,13 @@ export function resolveMapping(headers: string[], override: Partial<Record<Table
     }
     fields[field] = column as number;
   }
+  // 两个字段不得映射到同一列：否则身份键退化（如 brand::brand），静默污染导入。
+  const columnOwner = new Map<number, TableField>();
+  for (const [field, column] of Object.entries(fields) as Array<[TableField, number]>) {
+    const previous = columnOwner.get(column);
+    if (previous) throw new RangeError(`字段 ${field} 与 ${previous} 映射到同一列 ${column}。`);
+    columnOwner.set(column, field);
+  }
   if (!fields.brand) throw new RangeError('缺少「品牌」列映射，无法导入。');
   if (!fields.beanName) throw new RangeError('缺少「豆名」列映射，无法导入。');
   const mappedColumns = new Set(Object.values(fields).map((column) => column as number));

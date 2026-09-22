@@ -7,6 +7,7 @@ import {
   TABLE_DUPLICATE_DECISION_SCHEMA,
   UnresolvedTableConflictError,
   UnresolvedTableDuplicateError,
+  UnresolvedTableSkipError,
   type ConflictResolutions,
   type DuplicateDecisions,
 } from '../../import/table/commit-service.js';
@@ -34,6 +35,7 @@ const CommitBodySchema = z.object({
   resolutions: z.record(z.string(), ImportConflictChoiceSchema),
   duplicateDecisions: z.record(z.string(), TABLE_DUPLICATE_DECISION_SCHEMA).default({}),
   skippedBeanKeys: z.array(z.string().min(1)).default([]),
+  mergeTargets: z.record(z.string(), z.string().min(1)).default({}),
 });
 
 const PREVIEW_TTL_MS = 30 * 60 * 1_000;
@@ -131,6 +133,7 @@ export function registerTableImportRoutes(app: FastifyInstance, repository: Json
         parsed.data.resolutions as ConflictResolutions,
         parsed.data.duplicateDecisions as DuplicateDecisions,
         parsed.data.skippedBeanKeys,
+        parsed.data.mergeTargets,
       );
       previews.delete(preview.id);
       return reply.code(200).send({
@@ -146,6 +149,7 @@ export function registerTableImportRoutes(app: FastifyInstance, repository: Json
     } catch (error) {
       if (error instanceof UnresolvedTableConflictError) return reply.code(409).send({ error: 'conflicts_unresolved', message: error.message, conflictIds: error.conflictIds });
       if (error instanceof UnresolvedTableDuplicateError) return reply.code(409).send({ error: 'duplicates_unresolved', message: error.message, beanKeys: error.beanKeys });
+      if (error instanceof UnresolvedTableSkipError) return reply.code(409).send({ error: 'skips_unresolved', message: error.message, beanKeys: error.beanKeys });
       if (error instanceof InvalidTableResolutionError) return reply.code(422).send({ error: 'invalid_resolution', message: `${error.message}数据未写入。` });
       if (error instanceof RevisionConflictError) return reply.code(409).send({ error: 'revision_conflict', message: '看板数据已变更，请重新生成预览；数据未写入。', expected: error.expected, actual: error.actual });
       throw error;

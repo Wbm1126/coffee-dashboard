@@ -164,7 +164,7 @@ describe('通用表格导入', () => {
     const preview = await createTablePreview({ upload: badUpload, existing: await repository4.read() });
     expect(preview.categories.unrecognized).toBe(1);
 
-    await expect(commitTablePreview(repository4, preview, {}, {})).rejects.toMatchObject({ name: 'UnresolvedTableDuplicateError' });
+    await expect(commitTablePreview(repository4, preview, {}, {})).rejects.toMatchObject({ name: 'UnresolvedTableSkipError' });
     const key = preview.items[0]!.beanKey;
     await commitTablePreview(repository4, preview, {}, {}, [key]);
     expect((await repository4.read()).beans).toHaveLength(0);
