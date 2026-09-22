@@ -25,6 +25,7 @@
     "release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-release.ps1",
     "smoke:production": "tsx scripts/production-smoke.ts",
     "start": "node dist/server/start.js",
+    "start:vault": "node scripts/start-vault.mjs",
     "verify": "npm run lint && npm run typecheck && npm run test:unit && npm run test:integration && npm run build && npm run smoke:production"
   },
   "dependencies": {

@@ -1,12 +1,10 @@
 import { access, mkdir } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { resolveDataDir } from './lib/data-dir.mjs';
 
-const scriptDir = dirname(fileURLToPath(import.meta.url));
-const appRoot = resolve(scriptDir, '..');
-const dataDir = resolve(appRoot, '..', 'data');
+// 与 src/server/start.ts 共用同一套解析：环境变量 → app/.data-dir → 仓库 data/。
+const { dataDir } = await resolveDataDir();
 
 const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
 const nodeMajor = Number.parseInt(process.versions.node.split('.')[0] ?? '0', 10);
