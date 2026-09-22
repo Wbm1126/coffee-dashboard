@@ -92,12 +92,12 @@ export function CollectionWizard({ csrfToken, data, onDataChanged }: CollectionW
     beginConfirmationLifecycle();
     setCandidate(value); setPreview(nextPreview); setAccepted(defaults as CollectionFields); setMergeBeanId(null); setStage('preview');
   };
-  const beginNetworkRequest = () => {
+  const beginNetworkRequest = (timeoutMs = 15_000) => {
     if (networkRequestInFlight.current) return null;
     networkRequestInFlight.current = true;
     const controller = new AbortController();
     requestAbort.current = controller;
-    requestDeadline.current = window.setTimeout(() => controller.abort(), 15_000);
+    requestDeadline.current = window.setTimeout(() => controller.abort(), timeoutMs);
     return controller;
   };
   const finishNetworkRequest = (controller: AbortController) => {
@@ -111,7 +111,8 @@ export function CollectionWizard({ csrfToken, data, onDataChanged }: CollectionW
   const auto = async () => {
     const value = input.trim();
     if (!value) { setMessage('请先粘贴商品链接、输入品牌加豆名，或粘贴一段商品介绍。'); return; }
-    const controller = beginNetworkRequest();
+    // 服务端要串行完成搜索 + 解析两次外部请求，客户端预算放宽到 22 秒。
+    const controller = beginNetworkRequest(22_000);
     if (!controller) return;
     setStage('loading'); setMessage('');
     try {
@@ -120,16 +121,14 @@ export function CollectionWizard({ csrfToken, data, onDataChanged }: CollectionW
       if (response.ok && response.body.kind === 'candidate' && response.body.candidate && response.body.preview) {
         setUrl(response.body.candidate.sourceUrl ?? '');
         defaultCandidate(response.body.candidate, response.body.preview);
+        setMessage(response.body.searchMatched ? `已自动匹配候选：${response.body.searchMatched}` : '');
         return;
       }
       beginConfirmationLifecycle();
       setCandidate(null); setPreview(null);
-      setAccepted({
-        ...((response.body.fields ?? {}) as CollectionFields),
-        ...(value.includes('/') || value.includes('http') ? { officialFlavorDescription: value } : {}),
-      });
+      setAccepted((response.body.fields ?? {}) as CollectionFields);
       setMergeBeanId(null); setStage('manual');
-      setMessage(textError(response.body, '没有自动找到资料；已按输入预填，请核对品牌和豆名后保存。'));
+      setMessage(response.body.reason ?? textError(response.body, '没有自动找到资料；已按输入预填，请核对品牌和豆名后保存。'));
     } catch {
       if (!mounted.current) return;
       beginConfirmationLifecycle();
@@ -174,7 +173,7 @@ export function CollectionWizard({ csrfToken, data, onDataChanged }: CollectionW
         return;
       }
       beginConfirmationLifecycle();
-      setStage('idle'); setCandidate(null); setPreview(null); setAccepted({}); setMergeBeanId(null);
+      setStage('idle'); setUrl(''); setCandidate(null); setPreview(null); setAccepted({}); setMergeBeanId(null);
       try {
         await onDataChanged();
         if (mounted.current) setMessage('已加入关注；商品来源和你确认过的字段都已保存在本地。');
@@ -190,8 +189,8 @@ export function CollectionWizard({ csrfToken, data, onDataChanged }: CollectionW
 
   const cancel = () => {
     beginConfirmationLifecycle();
-    setCandidate(null); setPreview(null); setAccepted({}); setMergeBeanId(null); setStage('idle');
-    setMessage('已取消本次采集，没有创建或修改任何咖啡豆。链接和关键词仍保留，随时可以重新开始。');
+    setUrl(''); setCandidate(null); setPreview(null); setAccepted({}); setMergeBeanId(null); setStage('idle');
+    setMessage('已取消本次采集，没有创建或修改任何咖啡豆。输入内容已清空，随时可以重新开始。');
   };
 
   return (
@@ -201,7 +200,7 @@ export function CollectionWizard({ csrfToken, data, onDataChanged }: CollectionW
         <p>一个输入框即可：粘贴商品链接、输入「品牌 豆名」，或直接粘贴商品介绍。搜索与解析由系统自动完成，候选不会自动写入。</p>
       </div>
       <div className="collection-entry">
-        <label><span>添加咖啡豆</span><input aria-label="添加咖啡豆" value={input} onChange={(event) => setInput(event.target.value)} placeholder="例如：https://… 或 乔治队长 黑猫拼配" /></label>
+        <label><span>添加咖啡豆</span><textarea aria-label="添加咖啡豆" rows={3} value={input} onChange={(event) => setInput(event.target.value)} placeholder={'例如：https://… 或 乔治队长 黑猫拼配\n也可以直接粘贴一段商品介绍'} /></label>
         <button className="button-primary" type="button" disabled={stage === 'loading' || input.trim().length < 2} onClick={() => void auto()}>自动识别</button>
       </div>
       <div className="collection-feedback" role="status" aria-live="polite">{stage === 'loading' ? '正在读取公开商品资料…' : message}</div>
