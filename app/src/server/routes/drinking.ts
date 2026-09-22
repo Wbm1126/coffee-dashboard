@@ -11,6 +11,7 @@ import { createUnreviewedReview } from '../../domain/review-defaults.js';
 import {
   BrandSchema,
   BrewMethodSchema,
+  BrewParamsSchema,
   CoffeeBeanSchema,
   IdSchema,
   LocalDateSchema,
@@ -46,6 +47,7 @@ const SaveBodySchema = z.object({
   drankOn: LocalDateSchema,
   brewMethod: BrewMethodSchema,
   extractionNote: optionalText(4_000),
+  brewParams: BrewParamsSchema.nullable().optional(),
   feeling: optionalText(8_000),
   americanoReview: ReviewSchema,
   milkReview: ReviewSchema,
@@ -141,7 +143,7 @@ export function registerDrinkingRoutes(app: FastifyInstance, repository: JsonRep
         if (!record) {
           record = {
             id: randomUUID(), beanId: bean.id, purchaseItemId: parsed.data.purchaseItemId, drankOn: parsed.data.drankOn,
-            brewMethod: parsed.data.brewMethod, extractionNote: null, brewParams: null, feeling: null,
+            brewMethod: parsed.data.brewMethod, extractionNote: null, brewParams: parsed.data.brewParams ?? null, feeling: null,
             americanoReview: createUnreviewedReview(), milkReview: createUnreviewedReview(),
             draftAssessment: null, isDraft: parsed.data.isDraft,
             deletedAt: null, createdAt: now, updatedAt: now,
@@ -154,6 +156,8 @@ export function registerDrinkingRoutes(app: FastifyInstance, repository: JsonRep
           drankOn: parsed.data.drankOn,
           brewMethod: parsed.data.brewMethod,
           extractionNote: parsed.data.extractionNote,
+          // 未传 brewParams 时保留原配方（编辑其他字段不应清掉上次冲煮参数）。
+          ...(parsed.data.brewParams !== undefined ? { brewParams: parsed.data.brewParams } : {}),
           feeling: parsed.data.feeling,
           americanoReview: parsed.data.americanoReview,
           milkReview: parsed.data.milkReview,
