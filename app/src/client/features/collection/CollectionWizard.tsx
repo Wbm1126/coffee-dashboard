@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CoffeeData } from '../../../domain/schema';
-import { COLLECTION_FIELD_KEYS, type CollectionCandidate, type CollectionFieldKey, type CollectionFields, type SearchCandidate } from '../../../collectors/types';
+import { COLLECTION_FIELD_KEYS, type CollectionCandidate, type CollectionFieldKey, type CollectionFields } from '../../../collectors/types';
 
 type Preview = {
   duplicateBeans: Array<{ id: string; name: string; brandName: string }>;
@@ -49,9 +49,8 @@ interface CollectionWizardProps {
 }
 
 export function CollectionWizard({ csrfToken, data, onDataChanged }: CollectionWizardProps) {
-  const [query, setQuery] = useState('');
+  const [input, setInput] = useState('');
   const [url, setUrl] = useState('');
-  const [results, setResults] = useState<SearchCandidate[]>([]);
   const [candidate, setCandidate] = useState<CollectionCandidate | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [accepted, setAccepted] = useState<CollectionFields>({});
@@ -93,12 +92,12 @@ export function CollectionWizard({ csrfToken, data, onDataChanged }: CollectionW
     beginConfirmationLifecycle();
     setCandidate(value); setPreview(nextPreview); setAccepted(defaults as CollectionFields); setMergeBeanId(null); setStage('preview');
   };
-  const beginNetworkRequest = () => {
+  const beginNetworkRequest = (timeoutMs = 15_000) => {
     if (networkRequestInFlight.current) return null;
     networkRequestInFlight.current = true;
     const controller = new AbortController();
     requestAbort.current = controller;
-    requestDeadline.current = window.setTimeout(() => controller.abort(), 15_000);
+    requestDeadline.current = window.setTimeout(() => controller.abort(), timeoutMs);
     return controller;
   };
   const finishNetworkRequest = (controller: AbortController) => {
@@ -109,42 +108,32 @@ export function CollectionWizard({ csrfToken, data, onDataChanged }: CollectionW
     requestDeadline.current = null;
   };
 
-  const search = async () => {
-    const controller = beginNetworkRequest();
+  const auto = async () => {
+    const value = input.trim();
+    if (!value) { setMessage('请先粘贴商品链接、输入品牌加豆名，或粘贴一段商品介绍。'); return; }
+    // 服务端要串行完成搜索 + 解析两次外部请求，客户端预算放宽到 22 秒。
+    const controller = beginNetworkRequest(22_000);
     if (!controller) return;
     setStage('loading'); setMessage('');
     try {
-      const response = await postJson<{ candidates?: SearchCandidate[]; message?: string }>('/api/collect/search', csrfToken, { query }, controller.signal);
+      const response = await postJson<{ kind?: 'candidate' | 'manual'; candidate?: CollectionCandidate; preview?: Preview; fields?: CollectionFields; searchMatched?: string; reason?: string; message?: string }>('/api/collect/auto', csrfToken, { input: value }, controller.signal);
       if (!mounted.current) return;
-      if (!response.ok) { setStage('idle'); setMessage(textError(response.body, '搜索暂时不可用。你可以继续手工填写。')); return; }
-      setResults(response.body.candidates ?? []); setStage('idle');
-      setMessage((response.body.candidates?.length ?? 0) ? `找到 ${response.body.candidates!.length} 个候选，请选择后继续解析。` : '没有找到可用候选。你可以保留关键词并改用链接或手工填写。');
-    } catch {
-      if (!mounted.current) return;
-      setStage('idle'); setMessage('搜索连接中断。关键词仍保留，你可以重试或直接手工填写。');
-    } finally { finishNetworkRequest(controller); }
-  };
-
-  const parse = async (nextUrl = url) => {
-    if (!nextUrl.trim()) { setMessage('请先粘贴商品链接，或先用关键词搜索。'); return; }
-    const controller = beginNetworkRequest();
-    if (!controller) return;
-    setUrl(nextUrl); setStage('loading'); setMessage('');
-    try {
-      const response = await postJson<{ candidate?: CollectionCandidate; preview?: Preview; message?: string }>('/api/collect/parse', csrfToken, { url: nextUrl }, controller.signal);
-      if (!mounted.current) return;
-      if (!response.ok || !response.body.candidate || !response.body.preview) {
-        beginConfirmationLifecycle();
-        setCandidate(null); setPreview(null); setAccepted({}); setStage('manual');
-        setMessage(`${textError(response.body, '链接暂时无法解析。')} 你现在可以手工填写最少资料。`);
+      if (response.ok && response.body.kind === 'candidate' && response.body.candidate && response.body.preview) {
+        setUrl(response.body.candidate.sourceUrl ?? '');
+        defaultCandidate(response.body.candidate, response.body.preview);
+        setMessage(response.body.searchMatched ? `已自动匹配候选：${response.body.searchMatched}` : '');
         return;
       }
-      defaultCandidate(response.body.candidate, response.body.preview);
+      beginConfirmationLifecycle();
+      setCandidate(null); setPreview(null);
+      setAccepted((response.body.fields ?? {}) as CollectionFields);
+      setMergeBeanId(null); setStage('manual');
+      setMessage(response.body.reason ?? textError(response.body, '没有自动找到资料；已按输入预填，请核对品牌和豆名后保存。'));
     } catch {
       if (!mounted.current) return;
       beginConfirmationLifecycle();
-      setCandidate(null); setPreview(null); setAccepted({}); setStage('manual');
-      setMessage('链接请求中断。原始链接仍保留，你现在可以手工填写最少资料。');
+      setCandidate(null); setPreview(null); setAccepted({}); setMergeBeanId(null); setStage('manual');
+      setMessage('请求中断。已保留输入，请手工核对品牌和豆名后保存。');
     } finally { finishNetworkRequest(controller); }
   };
 
@@ -184,7 +173,7 @@ export function CollectionWizard({ csrfToken, data, onDataChanged }: CollectionW
         return;
       }
       beginConfirmationLifecycle();
-      setStage('idle'); setResults([]); setCandidate(null); setPreview(null); setAccepted({}); setMergeBeanId(null);
+      setStage('idle'); setUrl(''); setCandidate(null); setPreview(null); setAccepted({}); setMergeBeanId(null);
       try {
         await onDataChanged();
         if (mounted.current) setMessage('已加入关注；商品来源和你确认过的字段都已保存在本地。');
@@ -200,31 +189,26 @@ export function CollectionWizard({ csrfToken, data, onDataChanged }: CollectionW
 
   const cancel = () => {
     beginConfirmationLifecycle();
-    setCandidate(null); setPreview(null); setAccepted({}); setMergeBeanId(null); setResults([]); setStage('idle');
-    setMessage('已取消本次采集，没有创建或修改任何咖啡豆。链接和关键词仍保留，随时可以重新开始。');
+    setUrl(''); setCandidate(null); setPreview(null); setAccepted({}); setMergeBeanId(null); setStage('idle');
+    setMessage('已取消本次采集，没有创建或修改任何咖啡豆。输入内容已清空，随时可以重新开始。');
   };
 
   return (
     <section className="collection-studio" id="collection-studio" aria-labelledby="collection-title">
       <div className="collection-studio__heading">
-        <div><p className="section-kicker">FIELD NOTE / 03</p><h2 id="collection-title">联网采集与手工添加</h2></div>
-        <p>只在你点击搜索或解析时联网；候选不会自动写入，字段由你逐项决定。</p>
+        <div><p className="section-kicker">FIELD NOTE / 03</p><h2 id="collection-title">添加咖啡豆</h2></div>
+        <p>一个输入框即可：粘贴商品链接、输入「品牌 豆名」，或直接粘贴商品介绍。搜索与解析由系统自动完成，候选不会自动写入。</p>
       </div>
       <div className="collection-entry">
-        <label><span>关键词</span><input aria-label="关键词" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="品牌或咖啡豆名称" /></label>
-        <button className="button-outline" type="button" disabled={stage === 'loading' || query.trim().length < 2} onClick={() => void search()}>搜索候选</button>
-        <span className="collection-entry__or" aria-hidden="true">或</span>
-        <label><span>商品链接</span><input aria-label="商品链接" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://…" inputMode="url" /></label>
-        <button className="button-primary" type="button" disabled={stage === 'loading'} onClick={() => void parse()}>解析链接</button>
+        <label><span>添加咖啡豆</span><textarea aria-label="添加咖啡豆" rows={3} value={input} onChange={(event) => setInput(event.target.value)} placeholder={'例如：https://… 或 乔治队长 黑猫拼配\n也可以直接粘贴一段商品介绍'} /></label>
+        <button className="button-primary" type="button" disabled={stage === 'loading' || input.trim().length < 2} onClick={() => void auto()}>自动识别</button>
       </div>
       <div className="collection-feedback" role="status" aria-live="polite">{stage === 'loading' ? '正在读取公开商品资料…' : message}</div>
-      {results.length > 0 && <ol className="collection-results" aria-label="搜索候选">
-        {results.map((result) => <li key={result.url}><div><b>{result.title}</b>{result.snippet && <small>{result.snippet}</small>}</div><button type="button" className="text-button" disabled={stage === 'loading'} onClick={() => void parse(result.url)}>解析此链接</button></li>)}
-      </ol>}
       {(stage === 'preview' || stage === 'manual') && <div className="collection-confirmation">
         <div className="collection-confirmation__heading"><div><p className="section-kicker">CONFIRM BEFORE POUR</p><h3>确认这支豆的资料</h3></div><button type="button" className="text-button" onClick={cancel}>取消本次采集</button></div>
         {candidate && <p className="collection-source-note">候选来源：{candidate.sourceUrl} · 采集时间：{new Date(candidate.capturedAt).toLocaleString('zh-CN', { hour12: false })}</p>}
         {preview && preview.duplicateBeans.length > 0 && <fieldset className="collection-duplicates"><legend>发现可能重复的咖啡豆</legend><label><input type="radio" name="collection-target" checked={mergeBeanId === null} onChange={() => setMergeBeanId(null)} /> 创建一支新豆</label>{preview.duplicateBeans.map((bean) => <label key={bean.id}><input type="radio" name="collection-target" checked={mergeBeanId === bean.id} onChange={() => setMergeBeanId(bean.id)} /> 合并到「{bean.brandName} · {bean.name}」</label>)}</fieldset>}
+        <fieldset className="collection-zone"><legend>自动获取的资料（逐项确认，均可修改）</legend>
         <div className="collection-fields">
           {visibleKeys.map((key) => {
             const selected = accepted[key] !== undefined;
@@ -240,9 +224,14 @@ export function CollectionWizard({ csrfToken, data, onDataChanged }: CollectionW
             </fieldset>;
           })}
         </div>
-        <div className="collection-actions"><button className="button-primary" type="button" onClick={() => void confirm()}>确认加入关注</button><span>个人评价、购买与饮用记录不会被联网资料修改。</span></div>
+        </fieldset>
+        <details className="collection-personal">
+          <summary>个人信息（个人评价可稍后再补）</summary>
+          <p>品牌加豆名即可先保存。个人评分、冲煮记录和购买记录都在保存后的详情页里补录，联网资料永远不会覆盖它们。</p>
+        </details>
+        <div className="collection-actions"><button className="button-primary" type="button" onClick={() => void confirm()}>保存这支豆（品牌 + 豆名即可）</button><span>个人评价、购买与饮用记录不会被联网资料修改。</span></div>
       </div>}
-      {stage === 'idle' && !results.length && <button className="text-button collection-manual" type="button" onClick={beginManual}>不联网，直接手工填写</button>}
+      {stage === 'idle' && !candidate && <button className="text-button collection-manual" type="button" onClick={beginManual}>不联网，直接手工填写</button>}
     </section>
   );
 }

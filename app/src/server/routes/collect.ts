@@ -138,6 +138,64 @@ export function registerCollectionRoutes(app: FastifyInstance, repository: JsonR
     }
   });
 
+  // U3 统一入口：单输入框（链接 / 品牌+豆名 / 粘贴文本）由服务端自动编排搜索与解析。
+  // 自动化失败永远返回 200 + kind:'manual'（带身份预填），绝不阻塞用户手工创建。
+  const AutoBodySchema = z.object({ input: z.string().trim().min(1).max(4_000) });
+
+  const nonEmptyLines = (value: string) => value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+
+  function extractIdentityHint(input: string): { brandName?: string; beanName?: string; officialFlavorDescription?: string } {
+    // 预填值必须落在 CollectionFieldsSchema 的约束内（品牌 160 / 豆名 240），避免保存时被校验打回。
+    const first = nonEmptyLines(input)[0] ?? '';
+    const parts = first.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return { brandName: parts[0]!.slice(0, 160), beanName: parts.slice(1).join(' ').slice(0, 240) };
+    if (parts.length === 1) return { beanName: parts[0]!.slice(0, 240) };
+    return {};
+  }
+
+  app.post('/api/collect/auto', async (request, reply) => {
+    const parsed = AutoBodySchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(422).send({ error: 'invalid_input', message: '请输入商品链接、品牌加豆名，或一段商品介绍。' });
+    const input = parsed.data.input;
+    const data = await repository.read();
+    const manual = (reason: string, fields: Record<string, string> = {}) => reply.send({ kind: 'manual', fields, reason });
+
+    if (/^https?:\/\//i.test(input)) {
+      try {
+        const candidate = await service.parse(input);
+        return reply.send({ kind: 'candidate', candidate, preview: buildCollectionMergePreview(data, candidate) });
+      } catch (error) {
+        // URL 不参与身份预填（否则链接会被塞进豆名）；失败同样降级为手工，不阻塞创建。
+        if (error instanceof SafeUrlFetchError || error instanceof ProductMetadataError) {
+          return manual(`${error.message} 请核对品牌和豆名后手工保存。`);
+        }
+        return manual('链接暂时无法解析；请核对品牌和豆名后手工保存。');
+      }
+    }
+
+    // 多行输入视为粘贴文本（U4 由 LLM 增强），整段预填进官方描述；单行才作为搜索关键词。
+    const lines = nonEmptyLines(input);
+    if (lines.length >= 2) {
+      return manual('已按第一行预填品牌和豆名，完整文本已粘进官方描述，请核对后保存。', { ...extractIdentityHint(input), officialFlavorDescription: input });
+    }
+
+    const query = lines[0] ?? input;
+    const queryCheck = SearchBodySchema.safeParse({ query });
+    if (!queryCheck.success) return manual('输入不适合作为搜索关键词；已按输入预填，请核对后保存。', extractIdentityHint(input));
+    try {
+      const candidates = await service.search(queryCheck.data.query);
+      if (candidates.length === 0) return manual('没有搜索到可用候选；已按输入预填，请核对后保存。', extractIdentityHint(input));
+      const candidate = await service.parse(candidates[0]!.url);
+      return reply.send({ kind: 'candidate', candidate, preview: buildCollectionMergePreview(data, candidate), searchMatched: candidates[0]!.title });
+    } catch (error) {
+      request.log.warn({ err: error }, 'collect/auto search failed');
+      if (error instanceof SafeUrlFetchError || error instanceof ProductMetadataError) {
+        return manual(`${error.message} 已按输入预填，请核对后保存。`, extractIdentityHint(input));
+      }
+      return manual('搜索服务暂时不可用；已按输入预填，请核对后保存。', extractIdentityHint(input));
+    }
+  });
+
   app.post('/api/collect/confirm', async (request, reply) => {
     const parsed = ConfirmBodySchema.safeParse(request.body);
     if (!parsed.success) return reply.code(422).send({ error: 'invalid_collection_confirmation', message: '确认内容无效，数据未写入。', details: parsed.error.issues });
