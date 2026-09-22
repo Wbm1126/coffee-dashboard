@@ -119,8 +119,8 @@ export function registerCollectionRoutes(app: FastifyInstance, repository: JsonR
     const parsed = SearchBodySchema.safeParse(request.body);
     if (!parsed.success) return reply.code(422).send({ error: 'invalid_query', message: '请输入至少两个字符的品牌或豆名。' });
     try {
-      const candidates = await service.search(parsed.data.query);
-      return reply.send({ query: parsed.data.query, candidates, provider: 'DuckDuckGo HTML' });
+      const { candidates, provider } = await service.search(parsed.data.query);
+      return reply.send({ query: parsed.data.query, candidates, provider: provider === 'llm' ? 'LLM 搜索' : 'DuckDuckGo HTML' });
     } catch (error) {
       return collectionError(reply, error, '搜索暂时不可用。');
     }
@@ -173,17 +173,26 @@ export function registerCollectionRoutes(app: FastifyInstance, repository: JsonR
       }
     }
 
-    // 多行输入视为粘贴文本（U4 由 LLM 增强），整段预填进官方描述；单行才作为搜索关键词。
+    // 多行输入视为粘贴文本：U4 起由 LLM 直接理解整段文本（未配置 LLM 时退手工预填）。
     const lines = nonEmptyLines(input);
     if (lines.length >= 2) {
-      return manual('已按第一行预填品牌和豆名，完整文本已粘进官方描述，请核对后保存。', { ...extractIdentityHint(input), officialFlavorDescription: input });
+      // extractFromText 内部已保证不抛错（失败返回 null），无需路由层 try/catch。
+      const candidate = await service.extractFromText(input, 'user');
+      if (candidate) {
+        // 用户粘贴原文永不丢失：LLM 未把它归入官方描述时回填整段输入。
+        const merged = candidate.fields.officialFlavorDescription
+          ? candidate
+          : { ...candidate, fields: { ...candidate.fields, officialFlavorDescription: input } };
+        return reply.send({ kind: 'candidate', candidate: merged, preview: buildCollectionMergePreview(data, merged), searchMatched: 'LLM 文本理解' });
+      }
+      return manual('未配置 LLM 或理解失败；已按第一行预填品牌和豆名，完整文本已粘进官方描述，请核对后保存。', { ...extractIdentityHint(input), officialFlavorDescription: input });
     }
 
     const query = lines[0] ?? input;
     const queryCheck = SearchBodySchema.safeParse({ query });
     if (!queryCheck.success) return manual('输入不适合作为搜索关键词；已按输入预填，请核对后保存。', extractIdentityHint(input));
     try {
-      const candidates = await service.search(queryCheck.data.query);
+      const { candidates } = await service.search(queryCheck.data.query);
       if (candidates.length === 0) return manual('没有搜索到可用候选；已按输入预填，请核对后保存。', extractIdentityHint(input));
       const candidate = await service.parse(candidates[0]!.url);
       return reply.send({ kind: 'candidate', candidate, preview: buildCollectionMergePreview(data, candidate), searchMatched: candidates[0]!.title });

@@ -1,11 +1,12 @@
+// 联网采集冒烟：验证搜索 Provider（LLM 优先，未配置则 DuckDuckGo）真实可达。
 import { createCollectionService } from '../src/collectors/service.js';
 
 const query = process.argv.slice(2).join(' ').trim() || 'coffee beans';
 
 try {
-  const candidates = await createCollectionService().search(query);
+  const { candidates, provider } = await createCollectionService().search(query);
   if (!candidates.length) throw new Error('provider returned no candidates');
-  console.log(`DuckDuckGo HTML provider returned ${candidates.length} candidates for the controlled query.`);
+  console.log(`${provider} provider returned ${candidates.length} candidates for the controlled query.`);
 } catch (error) {
   const message = error instanceof Error ? error.message : 'unknown collector failure';
   console.error(`Collector smoke check failed: ${message}`);
