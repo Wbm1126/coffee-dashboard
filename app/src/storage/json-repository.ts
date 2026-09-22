@@ -37,11 +37,21 @@ export interface TransactionResult<T> {
   backup: BackupEntry | null;
 }
 
+// 尚未迁移到当前版本的整份数据文档。
+function isMigratableVersion(raw: unknown): boolean {
+  if (!raw || typeof raw !== 'object') return false;
+  const version = Reflect.get(raw, 'schemaVersion');
+  return Number.isInteger(version) && (version as number) >= 1 && (version as number) < CURRENT_SCHEMA_VERSION;
+}
+
 export class JsonRepository {
   readonly dataFile: string;
   readonly revisionFile: string;
   readonly backups: BackupService;
   private writeQueue: Promise<void> = Promise.resolve();
+  // 队列任务体（mutate/transact/restoreBackup）执行期间为 true，
+  // 供 readCurrent 判断迁移是否必须内联执行（见 migrateCurrentDocument）。
+  private insideQueuedTask = false;
   private highestObservedRevision = -1;
 
   constructor(readonly dataDir: string) {
@@ -93,19 +103,24 @@ export class JsonRepository {
     mutator: (draft: CoffeeData, nextRevision: number) => void | Promise<void>,
   ): Promise<CoffeeData> {
     const operation = this.writeQueue.then(async () => {
-      const current = await this.read();
-      if (current.dataRevision !== expectedRevision) {
-        throw new RevisionConflictError(expectedRevision, current.dataRevision);
+      this.insideQueuedTask = true;
+      try {
+        const current = await this.read();
+        if (current.dataRevision !== expectedRevision) {
+          throw new RevisionConflictError(expectedRevision, current.dataRevision);
+        }
+        const next = structuredClone(current);
+        const nextRevision = await this.nextRevision(current.dataRevision);
+        await mutator(next, nextRevision);
+        next.dataRevision = nextRevision;
+        next.updatedAt = new Date().toISOString();
+        const validated = CoffeeDataSchema.parse(next);
+        await this.backups.create('before-mutation');
+        await this.atomicReplace(validated);
+        return structuredClone(validated);
+      } finally {
+        this.insideQueuedTask = false;
       }
-      const next = structuredClone(current);
-      const nextRevision = await this.nextRevision(current.dataRevision);
-      await mutator(next, nextRevision);
-      next.dataRevision = nextRevision;
-      next.updatedAt = new Date().toISOString();
-      const validated = CoffeeDataSchema.parse(next);
-      await this.backups.create('before-mutation');
-      await this.atomicReplace(validated);
-      return structuredClone(validated);
     });
     this.writeQueue = operation.then(
       () => undefined,
@@ -120,21 +135,26 @@ export class JsonRepository {
     transaction: (draft: CoffeeData) => TransactionDecision<T> | Promise<TransactionDecision<T>>,
   ): Promise<TransactionResult<T>> {
     const operation = this.writeQueue.then(async () => {
-      const current = await this.read();
-      const next = structuredClone(current);
-      const decision = await transaction(next);
-      if (!decision.commit) {
-        return { data: structuredClone(current), value: decision.value, backup: null };
+      this.insideQueuedTask = true;
+      try {
+        const current = await this.read();
+        const next = structuredClone(current);
+        const decision = await transaction(next);
+        if (!decision.commit) {
+          return { data: structuredClone(current), value: decision.value, backup: null };
+        }
+        if (current.dataRevision !== expectedRevision) {
+          throw new RevisionConflictError(expectedRevision, current.dataRevision);
+        }
+        const backup = await this.backups.create(backupReason);
+        next.dataRevision = await this.nextRevision(current.dataRevision);
+        next.updatedAt = new Date().toISOString();
+        const validated = CoffeeDataSchema.parse(next);
+        await this.atomicReplace(validated);
+        return { data: structuredClone(validated), value: decision.value, backup };
+      } finally {
+        this.insideQueuedTask = false;
       }
-      if (current.dataRevision !== expectedRevision) {
-        throw new RevisionConflictError(expectedRevision, current.dataRevision);
-      }
-      const backup = await this.backups.create(backupReason);
-      next.dataRevision = await this.nextRevision(current.dataRevision);
-      next.updatedAt = new Date().toISOString();
-      const validated = CoffeeDataSchema.parse(next);
-      await this.atomicReplace(validated);
-      return { data: structuredClone(validated), value: decision.value, backup };
     });
     this.writeQueue = operation.then(
       () => undefined,
@@ -145,33 +165,42 @@ export class JsonRepository {
 
   restoreBackup(name: string): Promise<RepositoryInspection> {
     const operation = this.writeQueue.then(async () => {
-      const recoverableMainRevision = await this.readRecoverableMainRevision();
+      this.insideQueuedTask = true;
       try {
-        await this.readCurrent();
-        throw new Error('主数据仍可正常读取，当前不允许执行备份恢复。');
-      } catch (error) {
-        if (error instanceof UnsupportedSchemaVersionError) {
-          throw new Error('当前是高版本只读数据，不能用旧备份覆盖。');
-        }
-        if (error instanceof Error && error.message === '主数据仍可正常读取，当前不允许执行备份恢复。') {
-          throw error;
-        }
+        return await this.restoreBackupTask(name);
+      } finally {
+        this.insideQueuedTask = false;
       }
-
-      const backupBytes = await this.backups.readValidated(name);
-      const restored = migrateRawDocument(JSON.parse(backupBytes.toString('utf8')) as unknown);
-      restored.dataRevision = await this.nextRevision(restored.dataRevision, recoverableMainRevision);
-      restored.updatedAt = new Date().toISOString();
-      const validated = CoffeeDataSchema.parse(restored);
-      await this.atomicReplace(validated);
-      this.observe(validated);
-      return this.inspect();
     });
     this.writeQueue = operation.then(
       () => undefined,
       () => undefined,
     );
     return operation;
+  }
+
+  private async restoreBackupTask(name: string): Promise<RepositoryInspection> {
+    const recoverableMainRevision = await this.readRecoverableMainRevision();
+    try {
+      await this.readCurrent();
+      throw new Error('主数据仍可正常读取，当前不允许执行备份恢复。');
+    } catch (error) {
+      if (error instanceof UnsupportedSchemaVersionError) {
+        throw new Error('当前是高版本只读数据，不能用旧备份覆盖。');
+      }
+      if (error instanceof Error && error.message === '主数据仍可正常读取，当前不允许执行备份恢复。') {
+        throw error;
+      }
+    }
+
+    const backupBytes = await this.backups.readValidated(name);
+    const restored = migrateRawDocument(JSON.parse(backupBytes.toString('utf8')) as unknown);
+    restored.dataRevision = await this.nextRevision(restored.dataRevision, recoverableMainRevision);
+    restored.updatedAt = new Date().toISOString();
+    const validated = CoffeeDataSchema.parse(restored);
+    await this.atomicReplace(validated);
+    this.observe(validated);
+    return this.inspect();
   }
 
   private async atomicReplace(data: CoffeeData): Promise<void> {
@@ -206,7 +235,49 @@ export class JsonRepository {
 
   private async readCurrent(): Promise<CoffeeData> {
     const rawText = await readFile(this.dataFile, 'utf8');
-    const data = migrateRawDocument(JSON.parse(rawText) as unknown);
+    const raw = JSON.parse(rawText) as unknown;
+    if (isMigratableVersion(raw)) {
+      return this.migrateCurrentDocument();
+    }
+    const data = migrateRawDocument(raw);
+    this.observe(data);
+    return data;
+  }
+
+  // 旧版本数据的自动迁移。串行规则：
+  // - 队列任务内（mutate/transact/restoreBackup 的 read）：当前任务本身就是串行点，
+  //   直接内联执行——再挂到 writeQueue 尾部会形成循环等待死锁；
+  // - 队列外（GET 路由、inspect 等）：挂到 writeQueue，避免与并发写者互相覆盖，
+  //   并在队内重读最新字节（排队期间其他写者可能已完成迁移）。
+  // 先校验并算出迁移结果，再备份原始字节并原子落盘：注定失败的迁移不留备份。
+  // 备份或落盘失败不阻塞读取：按内存结果继续，磁盘恢复后下次读取会自动重试落盘。
+  private async migrateCurrentDocument(): Promise<CoffeeData> {
+    const run = async (): Promise<CoffeeData> => {
+      const latest = JSON.parse(await readFile(this.dataFile, 'utf8')) as unknown;
+      if (!isMigratableVersion(latest)) return this.parsedCurrent(latest);
+      const migrated = migrateRawDocument(latest);
+      try {
+        await this.backups.create('schema-migration');
+        await this.atomicReplace(migrated);
+      } catch (error) {
+        process.stderr.write(`Schema 迁移落盘失败，已按内存结果继续，磁盘恢复后读取会自动重试：${String(error)}\n`);
+      }
+      this.observe(migrated);
+      return migrated;
+    };
+    if (this.insideQueuedTask) {
+      return run();
+    }
+    const migration = this.writeQueue.then(run);
+    this.writeQueue = migration.then(
+      () => undefined,
+      () => undefined,
+    );
+    return migration;
+  }
+
+  private parsedCurrent(raw: unknown): CoffeeData {
+    const data = migrateRawDocument(raw);
     this.observe(data);
     return data;
   }
