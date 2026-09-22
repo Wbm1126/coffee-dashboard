@@ -138,6 +138,53 @@ export function registerCollectionRoutes(app: FastifyInstance, repository: JsonR
     }
   });
 
+  // U3 统一入口：单输入框（链接 / 品牌+豆名 / 粘贴文本）由服务端自动编排搜索与解析。
+  // 自动化失败永远返回 200 + kind:'manual'（带身份预填），绝不阻塞用户手工创建。
+  const AutoBodySchema = z.object({ input: z.string().trim().min(1).max(4_000) });
+
+  function extractIdentityHint(input: string): { brandName?: string; beanName?: string } {
+    const lines = input.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const first = lines[0] ?? '';
+    const parts = first.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return { brandName: parts[0]!, beanName: parts.slice(1).join(' ') };
+    if (parts.length === 1) return { beanName: parts[0]! };
+    return {};
+  }
+
+  app.post('/api/collect/auto', async (request, reply) => {
+    const parsed = AutoBodySchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(422).send({ error: 'invalid_input', message: '请输入商品链接、品牌加豆名，或一段商品介绍。' });
+    const input = parsed.data.input;
+    const data = await repository.read();
+    const manual = (reason: string) => reply.send({ kind: 'manual', fields: extractIdentityHint(input), reason });
+
+    if (/^https?:\/\//i.test(input)) {
+      try {
+        const candidate = await service.parse(input);
+        return reply.send({ kind: 'candidate', candidate, preview: buildCollectionMergePreview(data, candidate) });
+      } catch (error) {
+        return collectionError(reply, error, '链接暂时无法解析。');
+      }
+    }
+
+    // 多行输入视为粘贴文本（U4 由 LLM 增强），单行才作为搜索关键词。
+    const lines = input.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (lines.length >= 2) return manual('已按第一行预填品牌和豆名，请核对后保存；完整文本可粘进官方描述。');
+
+    const query = lines[0] ?? input;
+    try {
+      const candidates = await service.search(query);
+      if (candidates.length === 0) return manual('没有搜索到可用候选；已按输入预填，请核对后保存。');
+      const candidate = await service.parse(candidates[0]!.url);
+      return reply.send({ kind: 'candidate', candidate, preview: buildCollectionMergePreview(data, candidate), searchMatched: candidates[0]!.title });
+    } catch (error) {
+      if (error instanceof SafeUrlFetchError || error instanceof ProductMetadataError) {
+        return manual(`${error.message} 已按输入预填，请核对后保存。`);
+      }
+      return manual('搜索服务暂时不可用；已按输入预填，请核对后保存。');
+    }
+  });
+
   app.post('/api/collect/confirm', async (request, reply) => {
     const parsed = ConfirmBodySchema.safeParse(request.body);
     if (!parsed.success) return reply.code(422).send({ error: 'invalid_collection_confirmation', message: '确认内容无效，数据未写入。', details: parsed.error.issues });
