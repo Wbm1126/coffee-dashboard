@@ -67,7 +67,11 @@ export async function readXlsxTable(fileName: string, bytes: Uint8Array): Promis
           throw new WorkbookImportError('formula_rejected', `表格 ${worksheet.name}!${cell.address} 含公式，已拒绝导入。`);
         }
         // 按真实列号落位（稀疏数组）：中间的空单元格不能让后续列左移。
-        cells[cell.col - 1] = sourceCell(cell);
+        // exceljs 的 cell.col 在部分联合类型下是可选字段，从 address 兜底解析列号。
+        const fromAddress = cell.address.match(/^([A-Z]+)(\d+)$/i)?.[1];
+        const columnFromAddress = (fromAddress ?? '').split('').reduce((acc, ch) => acc * 26 + (ch.toUpperCase().charCodeAt(0) - 64), 0);
+        const column = typeof cell.col === 'number' ? cell.col : columnFromAddress;
+        cells[column - 1] = sourceCell(cell);
       });
       if (cells.length > 0) rows[rowNumber - 1] = cells;
     });
