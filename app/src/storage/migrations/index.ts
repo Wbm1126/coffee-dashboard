@@ -16,10 +16,10 @@ const SCHEMA_MIGRATIONS: Record<number, (document: RawDocument) => RawDocument> 
 };
 
 function migrateV1ToV2(document: RawDocument): RawDocument {
-  const migrated = structuredClone(document);
-  migrated.schemaVersion = 2;
-  migrated.beanEvaluations = Array.isArray(migrated.beanEvaluations) ? migrated.beanEvaluations : [];
-  return migrated;
+  // document 已是 migrateRawDocument 手中的私有克隆，此处原地修补即可。
+  document.schemaVersion = 2;
+  document.beanEvaluations = Array.isArray(document.beanEvaluations) ? document.beanEvaluations : [];
+  return document;
 }
 
 export function migrateRawDocument(raw: unknown): CoffeeData {
@@ -46,6 +46,9 @@ export function migrateRawDocument(raw: unknown): CoffeeData {
     version = Reflect.get(document, 'schemaVersion');
     if (!Number.isInteger(version) || (version as number) <= previousVersion) {
       throw new Error(`迁移步骤 ${String(previousVersion)} 未正确递增 schemaVersion。`);
+    }
+    if ((version as number) > CURRENT_SCHEMA_VERSION) {
+      throw new Error(`迁移步骤 ${String(previousVersion)} 越过了当前版本 ${String(CURRENT_SCHEMA_VERSION)}。`);
     }
   }
 

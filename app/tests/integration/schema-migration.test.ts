@@ -135,19 +135,26 @@ describe('Schema v1→v2 迁移', () => {
     expect(await readFile(repository.dataFile, 'utf8')).toBe(damaged);
   });
 
-  it('v1 内容非法时迁移失败进 recovery：原文件与迁移前备份保留，非法备份恢复被拒绝', async () => {
+  it('v1 内容非法时迁移失败进 recovery：先校验后备份，原文件保持不变', async () => {
     const repository = await repositoryWithRawDocument(v1Document({ beans: 'not-an-array' }));
 
     const inspection = await repository.initialize();
     expect(inspection.mode).toBe('recovery');
 
-    const backups = await repository.backups.list();
-    expect(backups).toHaveLength(1);
-    expect(backups[0]).toMatchObject({ valid: true });
+    // 校验前置：注定失败的迁移不得制造迁移备份，冲掉自动备份保留窗口。
+    expect(await repository.backups.list()).toHaveLength(0);
     expect(JSON.parse(await readFile(repository.dataFile, 'utf8'))).toMatchObject({ schemaVersion: 1 });
+  });
 
-    await expect(repository.restoreBackup(backups[0]!.name)).rejects.toThrow();
-    expect(await readFile(repository.dataFile, 'utf8')).toContain('not-an-array');
+  it('v1 数据上的并发读取只触发一次迁移与一份迁移备份', async () => {
+    const repository = await repositoryWithRawDocument(v1Document());
+
+    const [first, second] = await Promise.all([repository.read(), repository.read()]);
+
+    expect(first.schemaVersion).toBe(2);
+    expect(second.schemaVersion).toBe(2);
+    expect((await repository.backups.list())).toHaveLength(1);
+    expect(JSON.parse(await readFile(repository.dataFile, 'utf8'))).toMatchObject({ schemaVersion: 2 });
   });
 
   it('恢复合法的 v1 备份时自动迁移为 v2', async () => {

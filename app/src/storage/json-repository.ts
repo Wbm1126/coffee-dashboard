@@ -37,6 +37,13 @@ export interface TransactionResult<T> {
   backup: BackupEntry | null;
 }
 
+// 尚未迁移到当前版本的整份数据文档。
+function isMigratableVersion(raw: unknown): boolean {
+  if (!raw || typeof raw !== 'object') return false;
+  const version = Reflect.get(raw, 'schemaVersion');
+  return Number.isInteger(version) && (version as number) >= 1 && (version as number) < CURRENT_SCHEMA_VERSION;
+}
+
 export class JsonRepository {
   readonly dataFile: string;
   readonly revisionFile: string;
@@ -207,25 +214,35 @@ export class JsonRepository {
   private async readCurrent(): Promise<CoffeeData> {
     const rawText = await readFile(this.dataFile, 'utf8');
     const raw = JSON.parse(rawText) as unknown;
-    const version = raw && typeof raw === 'object' ? Reflect.get(raw, 'schemaVersion') : undefined;
-    if (Number.isInteger(version) && (version as number) < CURRENT_SCHEMA_VERSION) {
-      // 旧版本数据：先备份原始字节，再纯迁移、原子落盘；任一步失败都保持原文件不变。
-      await this.migratePersistedDocument(raw);
-      const reread = JSON.parse(await readFile(this.dataFile, 'utf8')) as unknown;
-      const data = migrateRawDocument(reread);
+    if (isMigratableVersion(raw)) {
+      // 旧版本数据：迁移必须与 mutate/transact 一样经 writeQueue 串行，
+      // 避免并发迁移的落盘相互覆盖、或在写者提交后又写回旧快照。
+      const migration = this.writeQueue.then(async () => {
+        // 队列内重读最新字节：排队期间其他写者可能已完成迁移。
+        const latest = JSON.parse(await readFile(this.dataFile, 'utf8')) as unknown;
+        if (!isMigratableVersion(latest)) return migrateRawDocument(latest);
+        // 先校验并算出迁移结果，再备份原始字节并原子落盘：注定失败的迁移不留备份。
+        const migrated = migrateRawDocument(latest);
+        try {
+          await this.backups.create('schema-migration');
+          await this.atomicReplace(migrated);
+        } catch (error) {
+          // 备份或落盘失败不阻塞读取：按内存结果继续，磁盘恢复后下次读取会自动重试落盘。
+          process.stderr.write(`Schema 迁移落盘失败，已按内存结果继续，磁盘恢复后读取会自动重试：${String(error)}\n`);
+        }
+        return migrated;
+      });
+      this.writeQueue = migration.then(
+        () => undefined,
+        () => undefined,
+      );
+      const data = await migration;
       this.observe(data);
       return data;
     }
     const data = migrateRawDocument(raw);
     this.observe(data);
     return data;
-  }
-
-  private async migratePersistedDocument(raw: unknown): Promise<void> {
-    await this.backups.create('schema-migration');
-    const migrated = migrateRawDocument(raw);
-    await this.atomicReplace(migrated);
-    this.observe(migrated);
   }
 
   private observe(data: CoffeeData): void {
