@@ -1,7 +1,7 @@
 import { parseProductMetadata, ProductMetadataError } from './parse/metadata.js';
 import { parseDuckDuckGoResults } from './search/duckduckgo.js';
-import { createSafeUrlFetcher, SafeUrlFetchError, type SafeHtmlResult } from './url-policy.js';
-import { LlmError, buildChatInit, chatFromResponse, extractFieldsWithLlm, readLlmConfig, searchWithLlm, type ChatFn, type LlmConfig } from './llm.js';
+import { createSafeUrlFetcher, type SafeHtmlResult } from './url-policy.js';
+import { CHAT_TIMEOUT_MS, LlmError, buildChatInit, chatFromResponse, extractFieldsWithLlm, readLlmConfig, searchWithLlm, type ChatFn, type LlmConfig } from './llm.js';
 import type { CollectionCandidate, SearchCandidate } from './types.js';
 
 export interface CollectionService {
@@ -29,10 +29,12 @@ export function createCollectionService(options: {
 } = {}): CollectionService {
   const fetchHtml = options.fetchHtml ?? createSafeUrlFetcher().fetchHtml;
   const chat = options.chat;
-  // LLM 配置惰性解析一次：env 优先，其次 git 忽略的 app/.llm.json；都没有则完全不用 LLM。
+  // LLM 配置惰性解析一次：来自 git 忽略的 app/.llm.json；没有则完全不用 LLM。
+  // 测试环境默认封闭：除非显式注入 llmConfig，否则不读取开发者本机的真实配置。
   let llmConfigPromise: Promise<LlmConfig | null> | undefined;
   const llm = () => {
     if (options.llmConfig !== undefined) return Promise.resolve(options.llmConfig);
+    if (process.env.NODE_ENV === 'test') return Promise.resolve(null);
     llmConfigPromise ??= readLlmConfig();
     return llmConfigPromise;
   };
@@ -41,7 +43,7 @@ export function createCollectionService(options: {
     const init = buildChatInit(config, request);
     let response: Response;
     try {
-      response = await fetch(new URL(config.endpoint), { ...init, signal: AbortSignal.timeout(request.timeoutMs ?? 30_000) });
+      response = await fetch(new URL(config.endpoint), { ...init, signal: AbortSignal.timeout(request.timeoutMs ?? CHAT_TIMEOUT_MS) });
     } catch (error) {
       if ((error as Error | undefined)?.name === 'TimeoutError') {
         throw new LlmError('timeout', 'LLM 请求超时。');
@@ -57,8 +59,9 @@ export function createCollectionService(options: {
       if (config) {
         try {
           return { candidates: await searchWithLlm(chatOrDefault, config, query), provider: 'llm' };
-        } catch {
-          // LLM 搜索失败自动降级 DuckDuckGo（海外可达时），再失败由调用方退手工。
+        } catch (error) {
+          // 降级前留下日志，避免 LLM 配置/网络问题在线上不可诊断。
+          console.warn('[collect] LLM 搜索失败，已降级 DuckDuckGo：', error instanceof Error ? error.message : error);
         }
       }
       const endpoint = new URL('https://html.duckduckgo.com/html/');
@@ -72,15 +75,20 @@ export function createCollectionService(options: {
         return parseProductMetadata({ url: page.finalUrl, html: page.html, capturedAt: new Date().toISOString() });
       } catch (error) {
         // 第一/二层（结构化+规则）没有结果时，第三层 LLM 理解页面正文（配置了才启用）。
+        // 第三层自身失败不得覆盖原始解析错误，保持 422 手工降级语义。
         const config = await llm();
         if (error instanceof ProductMetadataError && config) {
-          const candidate = await extractFieldsWithLlm(chatOrDefault, config, {
-            text: stripHtmlTags(page.html),
-            sourceKind: 'search',
-            capturedAt: new Date().toISOString(),
-            sourceUrl: page.finalUrl,
-          });
-          if (candidate) return candidate;
+          try {
+            const candidate = await extractFieldsWithLlm(chatOrDefault, config, {
+              text: stripHtmlTags(page.html),
+              sourceKind: 'search',
+              capturedAt: new Date().toISOString(),
+              sourceUrl: page.finalUrl,
+            });
+            if (candidate) return candidate;
+          } catch (llmError) {
+            console.warn('[collect] LLM 页面抽取失败，维持原始解析错误：', llmError instanceof Error ? llmError.message : llmError);
+          }
         }
         throw error;
       }
@@ -90,12 +98,11 @@ export function createCollectionService(options: {
       if (!config) return null;
       try {
         return await extractFieldsWithLlm(chatOrDefault, config, { text, sourceKind, capturedAt: new Date().toISOString() });
-      } catch {
+      } catch (error) {
         // LLM 理解失败不阻塞：返回 null，调用方退手工预填。
+        console.warn('[collect] LLM 文本理解失败，已退手工预填：', error instanceof Error ? error.message : error);
         return null;
       }
     },
   };
 }
-
-export { SafeUrlFetchError };

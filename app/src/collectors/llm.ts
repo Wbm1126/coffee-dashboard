@@ -6,7 +6,17 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
 import { extractJsonBlock } from '../lib/json-extract.js';
+import { COLLECTION_FIELD_KEYS, CollectionFieldsSchema, SearchCandidateSchema, type CollectionCandidate, type SearchCandidate } from './types.js';
+
+// 调参常量集中在此，避免提示词与代码双份维护。
+const MAX_LLM_CANDIDATES = 5;
+const LLM_TEMPERATURE = 0.2;
+const SEARCH_TIMEOUT_MS = 15_000;
+const EXTRACT_TIMEOUT_MS = 20_000;
+/** 默认 chat 网络预算：供 service.ts 的默认 ChatFn 使用。 */
+export const CHAT_TIMEOUT_MS = 30_000;
 
 export class LlmError extends Error {
   constructor(public readonly code: 'not_configured' | 'http_status' | 'bad_response' | 'timeout', message: string) {
@@ -23,7 +33,8 @@ export interface LlmConfig {
   headers: Record<string, string>;
 }
 
-const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// 修复 OCR critical：本文件位于 src/collectors/，向上两级才是 app/（dist 运行时同理）。
+const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export async function readLlmConfig(): Promise<LlmConfig | null> {
   try {
@@ -57,26 +68,29 @@ interface ChatRequestInit {
   body: string;
 }
 
-import { COLLECTION_FIELD_KEYS, CollectionFieldsSchema, SearchCandidateSchema, type CollectionCandidate, type SearchCandidate } from './types.js';
+const SEARCH_PROMPT = (query: string) => `你是咖啡豆商品搜索助手。只输出 JSON 数组，不要输出任何解释文字。数组元素形如 {"title":"商品标题","url":"商品页链接","snippet":"一句话摘要"}，最多 ${MAX_LLM_CANDIDATES} 条，url 必须是 http(s) 完整链接。搜索关键词：${query}`;
 
-const SEARCH_SYSTEM = '你是咖啡豆商品搜索助手。只输出 JSON 数组，不要输出任何解释文字。数组元素形如 {"title":"商品标题","url":"商品页链接","snippet":"一句话摘要"}，最多 5 条，url 必须是 http(s) 完整链接。';
+// LLM 输出用宽松校验：剥离多余字段而不是整条丢弃（SearchCandidateSchema 是 strict，模型常附加 source 等字段）。
+const LlmSearchItemSchema = z.object(SearchCandidateSchema.shape);
 
 export async function searchWithLlm(chat: ChatFn, config: LlmConfig, query: string): Promise<SearchCandidate[]> {
-  const content = await chat(config, { system: SEARCH_SYSTEM, user: query, timeoutMs: 15_000 });
+  const content = await chat(config, { system: SEARCH_PROMPT(query), user: '请开始搜索。', timeoutMs: SEARCH_TIMEOUT_MS });
   const parsed = extractJsonBlock(content);
   if (!Array.isArray(parsed)) throw new LlmError('bad_response', 'LLM 搜索结果不是数组。');
   const candidates: SearchCandidate[] = [];
   for (const item of parsed) {
-    const checked = SearchCandidateSchema.safeParse(item);
+    const checked = LlmSearchItemSchema.safeParse(item);
     if (!checked.success) continue;
-    if (!/^https:\/\//i.test(checked.data.url)) continue;
+    if (!/^https?:\/\//i.test(checked.data.url)) continue;
     candidates.push(checked.data);
-    if (candidates.length >= 5) break;
+    if (candidates.length >= MAX_LLM_CANDIDATES) break;
   }
+  // 合法条目为 0 视为 bad_response：让上层自动降级 DuckDuckGo，而不是静默返回空数组。
+  if (candidates.length === 0) throw new LlmError('bad_response', 'LLM 搜索没有返回可用候选。');
   return candidates;
 }
 
-const EXTRACT_SYSTEM = '你是咖啡豆商品信息抽取助手。从给定文本中提取咖啡豆字段，只输出一个 JSON 对象：{"brandName":"品牌","beanName":"豆名","roastLevel":"烘焙度","process":"处理法","flavorNotes":["风味1","风味2"],"originOrVariety":"产地或豆种","officialFlavorDescription":"官方风味描述原文","referencePrice":数字,"packageGrams":数字}。文本中没有的字段一律省略；不得编造、不得推测。只输出 JSON。';
+const EXTRACT_SYSTEM = '你是咖啡豆商品信息抽取助手。从给定文本中提取咖啡豆字段，只输出一个 JSON 对象：{"brandName":"品牌","beanName":"豆名","roastLevel":"烘焙度","process":"处理法","flavorNotes":["风味1","风味2"],"originOrVariety":"产地或豆种","officialFlavorDescription":"官方风味描述原文","referencePrice":{"amount":数字,"currency":"CNY"},"packageGrams":数字}。文本中没有的字段一律省略；不得编造、不得推测。只输出 JSON。';
 
 export interface LlmExtractionInput {
   text: string;
@@ -87,7 +101,7 @@ export interface LlmExtractionInput {
 }
 
 export async function extractFieldsWithLlm(chat: ChatFn, config: LlmConfig, input: LlmExtractionInput): Promise<CollectionCandidate | null> {
-  const content = await chat(config, { system: EXTRACT_SYSTEM, user: input.text, timeoutMs: 20_000 });
+  const content = await chat(config, { system: EXTRACT_SYSTEM, user: input.text, timeoutMs: EXTRACT_TIMEOUT_MS });
   const parsed = extractJsonBlock(content);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
   const record = parsed as Record<string, unknown>;
@@ -122,7 +136,7 @@ export function buildChatInit(config: LlmConfig, request: ChatRequest): ChatRequ
         { role: 'system', content: request.system },
         { role: 'user', content: request.user },
       ],
-      temperature: 0.2,
+      temperature: LLM_TEMPERATURE,
     }),
   };
 }
@@ -137,10 +151,10 @@ export async function chatFromResponse(response: Response): Promise<string> {
     } catch { /* 保留空详情 */ }
     throw new LlmError('http_status', `LLM 返回 ${response.status}：${detail || '无详细信息'}`);
   }
-  const body = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-  const content = body.choices?.[0]?.message?.content;
+  const body = await response.json().catch(() => null) as { choices?: Array<{ message?: { content?: string } }> } | null;
+  const content = body?.choices?.[0]?.message?.content;
   if (typeof content !== 'string' || !content.trim()) {
-    throw new LlmError('bad_response', 'LLM 返回了空内容。');
+    throw new LlmError('bad_response', 'LLM 返回了空内容或非 JSON 内容。');
   }
   return content;
 }
