@@ -60,6 +60,7 @@ export interface TableEvaluationCandidate {
   overallScore: number | null;
   personalScoreRaw: string | null;
   status: LegacyStatus;
+  summaryText: string | null;
 }
 
 export interface RecognizedTableItem {
@@ -177,9 +178,18 @@ function buildBeanFacts(
   const suitableScenes = splitList(get('suitableScenes')?.displayedText ?? '');
   const status = normalizeStatus(get('status')?.displayedText ?? '');
   const score = parseScore(get('personalScore'));
+  const scoreBasis = text(get('scoreBasis'));
   const evaluations: TableEvaluationCandidate[] = [];
-  if (score !== null || text(get('scoreBasis')) !== null) {
-    evaluations.push({ rowNumber, overallScore: score, personalScoreRaw: text(get('personalScore')), status });
+  // 评价 = 喝过之后的记录：只有已喝/在喝的行生成 BeanEvaluation；
+  // 字母等级（A+ 等）不是数值，overallScore 保持 null，原文存 summary，不伪造数字。
+  if (status === 'drank' || status === 'drinking') {
+    evaluations.push({
+      rowNumber,
+      overallScore: score,
+      personalScoreRaw: text(get('personalScore')),
+      status,
+      summaryText: scoreBasis,
+    });
   }
 
   const bean = CoffeeBeanSchema.parse({
@@ -383,12 +393,13 @@ export function matchTableRows(
     for (const extra of group.slice(1)) {
       const extraScore = parseScore(cellAt(extra.cells, mapping, 'personalScore'));
       const extraStatus = normalizeStatus(cellAt(extra.cells, mapping, 'status')?.displayedText ?? '');
-      if (extraScore !== null || text(cellAt(extra.cells, mapping, 'scoreBasis')) !== null) {
+      if (extraStatus === 'drank' || extraStatus === 'drinking') {
         facts.evaluations.push({
           rowNumber: extra.rowNumber,
           overallScore: extraScore,
           personalScoreRaw: text(cellAt(extra.cells, mapping, 'personalScore')),
           status: extraStatus,
+          summaryText: text(cellAt(extra.cells, mapping, 'scoreBasis')),
         });
       }
     }

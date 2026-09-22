@@ -66,11 +66,12 @@ export async function readXlsxTable(fileName: string, bytes: Uint8Array): Promis
         if (cell.type === ExcelJS.ValueType.Formula) {
           throw new WorkbookImportError('formula_rejected', `表格 ${worksheet.name}!${cell.address} 含公式，已拒绝导入。`);
         }
-        cells.push(sourceCell(cell));
+        // 按真实列号落位（稀疏数组）：中间的空单元格不能让后续列左移。
+        cells[cell.col - 1] = sourceCell(cell);
       });
       if (cells.length > 0) rows[rowNumber - 1] = cells;
     });
-    // 压缩稀疏数组，保留原始行号语义由调用方按需记录。
+    // 去掉整行皆空的占位行；行内保留稀疏空洞（访问为 undefined，视为空单元格）。
     sheets.push({ name: worksheet.name, rowCount: worksheet.rowCount, rows: rows.filter((cells) => Array.isArray(cells)) });
   }
   return { fileName, sheets };

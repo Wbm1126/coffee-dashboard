@@ -220,7 +220,7 @@ export async function commitTablePreview(
           flavorNotes: [],
           pros: null,
           cons: null,
-          summary: null,
+          summary: candidate.summaryText,
           repurchase: null,
           sourceRecordId: null,
           createdAt: committedAt,
