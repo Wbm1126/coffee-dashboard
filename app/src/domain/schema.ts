@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ImportConflictChoiceSchema } from './import-contract.js';
 
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 export const IdSchema = z.string().uuid();
 const IsoInstant = z.string().datetime({ offset: true });
@@ -73,6 +73,10 @@ export const ProductSourceSchema = z.object({
   beanId: IdSchema,
   url: z.string().url(),
   title: z.string().max(500).nullable().default(null),
+  // v1.1 商品图片：抓取失败不阻塞创建，三个字段都允许为空；localImagePath 指向本地缓存副本。
+  imageUrl: z.string().url().nullable().default(null),
+  localImagePath: z.string().max(1_000).nullable().default(null),
+  imageSource: z.string().max(500).nullable().default(null),
   capturedAt: IsoInstant,
   fields: z.record(z.string(), FieldProvenanceSchema).default({}),
 });
@@ -115,6 +119,59 @@ export const ReviewSchema = z
     }
   });
 
+// v1.1 结构化冲煮参数：全 optional，用于快速复用上次配方与后续个人冲煮分析；
+// 缺字段保持 null，不得为历史记录伪造数值。extractionNote 文字说明继续保留。
+export const BrewParamsSchema = z.object({
+  doseGrams: z.number().finite().positive().nullable().default(null),
+  yieldGrams: z.number().finite().positive().nullable().default(null),
+  brewTimeSeconds: z.number().int().positive().nullable().default(null),
+  temperatureC: z.number().finite().min(0).max(100).nullable().default(null),
+  grindSetting: z.string().max(80).nullable().default(null),
+  waterGrams: z.number().finite().positive().nullable().default(null),
+  milkGrams: z.number().finite().positive().nullable().default(null),
+});
+export type BrewParams = z.infer<typeof BrewParamsSchema>;
+
+// v1.1 BeanEvaluation：承接无准确日期的历史评价与个人评分，
+// 避免为兼容模型伪造 DrinkingRecord。source 区分手工、由饮用记录衍生与历史导入。
+export const BeanEvaluationSchema = z
+  .object({
+    id: IdSchema,
+    beanId: IdSchema,
+    source: z.enum(['manual', 'drinking', 'legacy_import']),
+    evaluatedOn: LocalDateSchema.nullable().default(null),
+    brewMethod: BrewMethodSchema.nullable().default(null),
+    americanoReview: ReviewSchema.nullable().default(null),
+    milkReview: ReviewSchema.nullable().default(null),
+    overallScore: z.number().min(1).max(5).multipleOf(0.5).nullable().default(null),
+    flavorNotes: z.array(z.string().trim().min(1).max(100)).default([]),
+    pros: z.string().max(4_000).nullable().default(null),
+    cons: z.string().max(4_000).nullable().default(null),
+    summary: z.string().max(8_000).nullable().default(null),
+    repurchase: RepurchaseSchema.nullable().default(null),
+    sourceRecordId: IdSchema.nullable().default(null),
+    createdAt: IsoInstant,
+    updatedAt: IsoInstant,
+  })
+  .superRefine((evaluation, context) => {
+    if (evaluation.source === 'drinking' && evaluation.sourceRecordId === null) {
+      context.addIssue({
+        code: 'custom',
+        path: ['sourceRecordId'],
+        message: '由饮用记录衍生的评价必须关联对应记录。',
+      });
+    }
+    for (const field of ['americanoReview', 'milkReview'] as const) {
+      if (evaluation[field]?.state === 'reviewed' && evaluation[field].score === null) {
+        context.addIssue({
+          code: 'custom',
+          path: [field, 'score'],
+          message: '已评价维度必须填写 1–5 分评分。',
+        });
+      }
+    }
+  });
+
 export const DraftAssessmentSchema = z.object({
   grade: z.string().max(40).nullable().default(null),
   repurchase: RepurchaseSchema.nullable().default(null),
@@ -129,6 +186,7 @@ export const DrinkingRecordSchema = z
     drankOn: LocalDateSchema,
     brewMethod: BrewMethodSchema,
     extractionNote: z.string().max(4_000).nullable().default(null),
+    brewParams: BrewParamsSchema.nullable().default(null),
     feeling: z.string().max(8_000).nullable().default(null),
     americanoReview: ReviewSchema.nullable().default(null),
     milkReview: ReviewSchema.nullable().default(null),
@@ -252,6 +310,7 @@ export const CoffeeDataSchema = z.object({
   purchases: z.array(PurchaseSchema),
   purchaseItems: z.array(PurchaseItemSchema),
   drinkingRecords: z.array(DrinkingRecordSchema),
+  beanEvaluations: z.array(BeanEvaluationSchema).default([]),
   assessments: z.array(UserBeanAssessmentSchema),
   preferenceProfile: PreferenceProfileSchema,
   // U1 accepted this rebuildable layer as unknown. Keep every formerly valid
@@ -271,6 +330,7 @@ export type Review = z.infer<typeof ReviewSchema>;
 export type DrinkingRecord = z.infer<typeof DrinkingRecordSchema>;
 export type BrewMethod = z.infer<typeof BrewMethodSchema>;
 export type Repurchase = z.infer<typeof RepurchaseSchema>;
+export type BeanEvaluation = z.infer<typeof BeanEvaluationSchema>;
 export type PreferenceProfile = z.infer<typeof PreferenceProfileSchema>;
 export type RecommendationSnapshot = z.infer<typeof RecommendationSnapshotSchema>;
 export type RecommendationItem = z.infer<typeof RecommendationItemSchema>;
@@ -287,6 +347,7 @@ export function createEmptyCoffeeData(now = new Date()): CoffeeData {
     purchases: [],
     purchaseItems: [],
     drinkingRecords: [],
+    beanEvaluations: [],
     assessments: [],
     preferenceProfile: {
       brewMode: 'balanced',

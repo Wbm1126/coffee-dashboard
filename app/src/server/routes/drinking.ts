@@ -107,7 +107,7 @@ export function registerDrinkingRoutes(app: FastifyInstance, repository: JsonRep
           const drinkingRecordId = randomUUID();
           draft.drinkingRecords.push({
             id: drinkingRecordId, beanId: bean.id, purchaseItemId: null, drankOn: item.drankOn,
-            brewMethod: item.brewMethod, extractionNote: null, feeling: null,
+            brewMethod: item.brewMethod, extractionNote: null, brewParams: null, feeling: null,
             americanoReview: createUnreviewedReview(), milkReview: createUnreviewedReview(), draftAssessment: null, isDraft: false,
             deletedAt: null, createdAt: now, updatedAt: now,
           });
@@ -141,7 +141,7 @@ export function registerDrinkingRoutes(app: FastifyInstance, repository: JsonRep
         if (!record) {
           record = {
             id: randomUUID(), beanId: bean.id, purchaseItemId: parsed.data.purchaseItemId, drankOn: parsed.data.drankOn,
-            brewMethod: parsed.data.brewMethod, extractionNote: null, feeling: null,
+            brewMethod: parsed.data.brewMethod, extractionNote: null, brewParams: null, feeling: null,
             americanoReview: createUnreviewedReview(), milkReview: createUnreviewedReview(),
             draftAssessment: null, isDraft: parsed.data.isDraft,
             deletedAt: null, createdAt: now, updatedAt: now,

@@ -206,9 +206,26 @@ export class JsonRepository {
 
   private async readCurrent(): Promise<CoffeeData> {
     const rawText = await readFile(this.dataFile, 'utf8');
-    const data = migrateRawDocument(JSON.parse(rawText) as unknown);
+    const raw = JSON.parse(rawText) as unknown;
+    const version = raw && typeof raw === 'object' ? Reflect.get(raw, 'schemaVersion') : undefined;
+    if (Number.isInteger(version) && (version as number) < CURRENT_SCHEMA_VERSION) {
+      // 旧版本数据：先备份原始字节，再纯迁移、原子落盘；任一步失败都保持原文件不变。
+      await this.migratePersistedDocument(raw);
+      const reread = JSON.parse(await readFile(this.dataFile, 'utf8')) as unknown;
+      const data = migrateRawDocument(reread);
+      this.observe(data);
+      return data;
+    }
+    const data = migrateRawDocument(raw);
     this.observe(data);
     return data;
+  }
+
+  private async migratePersistedDocument(raw: unknown): Promise<void> {
+    await this.backups.create('schema-migration');
+    const migrated = migrateRawDocument(raw);
+    await this.atomicReplace(migrated);
+    this.observe(migrated);
   }
 
   private observe(data: CoffeeData): void {

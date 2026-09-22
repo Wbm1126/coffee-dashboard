@@ -170,7 +170,7 @@ export function registerCollectionRoutes(app: FastifyInstance, repository: JsonR
         const sourceId = input.candidate.sourceUrl ? `collection:${input.candidate.sourceUrl}` : 'collection:manual';
         applyAcceptedFields(draft, bean.id, input.acceptedFields, sourceId, now);
         if (input.candidate.sourceUrl) {
-          draft.productSources.push({ id: randomUUID(), beanId: bean.id, url: input.candidate.sourceUrl, title: input.candidate.title, capturedAt: input.candidate.capturedAt, fields: sourceFields(input.candidate) });
+          draft.productSources.push({ id: randomUUID(), beanId: bean.id, url: input.candidate.sourceUrl, title: input.candidate.title, imageUrl: null, localImagePath: null, imageSource: null, capturedAt: input.candidate.capturedAt, fields: sourceFields(input.candidate) });
         }
         savedBeanId = bean.id;
         draft.collectionOperations ??= [];
