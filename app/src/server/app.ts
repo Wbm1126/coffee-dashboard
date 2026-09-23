@@ -12,6 +12,7 @@ import { registerBeanRoutes } from './routes/beans.js';
 import { registerRecommendationRoutes } from './routes/recommendations.js';
 import { registerCollectionRoutes } from './routes/collect.js';
 import { registerExportRoutes } from './routes/exports.js';
+import { registerImageRoutes } from '../collectors/image-cache.js';
 import type { CollectionService } from '../collectors/service.js';
 
 export interface BuildAppOptions {
@@ -67,6 +68,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerRecommendationRoutes(app, options.repository);
   registerCollectionRoutes(app, options.repository, options.collectionService);
   registerExportRoutes(app, options.repository);
+  registerImageRoutes(app, options.repository.dataDir);
 
   if (options.serveStatic !== false && options.staticRoot && existsSync(options.staticRoot)) {
     await app.register(fastifyStatic, {

@@ -34,6 +34,8 @@ export const CollectionCandidateSchema = z.object({
   title: z.string().trim().min(1).max(500),
   capturedAt: z.string().datetime({ offset: true }),
   sourceKind: z.enum(['official', 'search', 'user']),
+  // U7 商品图片：页面声明的图片地址；本地缓存由确认流程异步完成，失败不影响入库。
+  imageUrl: z.string().url().max(2_000).optional(),
   fields: CollectionFieldsSchema,
 }).strict();
 

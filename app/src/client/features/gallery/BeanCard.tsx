@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import type { GalleryItem } from './gallery-model';
 import { BEAN_BADGE_LABELS } from './gallery-options';
 import { BREW_METHOD_OPTIONS, REVIEW_SCORE_MAX } from '../reviews/review-options';
@@ -12,7 +12,13 @@ export function BeanCard({ item, selected, onSelect, onOpen, onFollow, onPurchas
   const primaryTrack = latestDrink && latestDrink.record.brewMethod === 'milk' ? latestDrink.record.milkReview : latestDrink?.record.americanoReview;
   const latestScore = primaryTrack?.score ?? null;
   const latestMethodLabel = BREW_METHOD_OPTIONS.find((option) => option.value === latestDrink?.record.brewMethod)?.label;
+  // U7 商品图：受 CSP(img-src 'self') 限制，远程地址无法直接加载；本地缓存就绪前显示占位。
+  const source = item.sources.find((candidate) => Boolean(candidate.localImagePath ?? candidate.imageUrl)) ?? null;
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const rawImageSrc = source?.localImagePath ? `/api/images/${source.localImagePath}` : null;
+  const imageSrc = rawImageSrc !== null && rawImageSrc !== failedSrc ? rawImageSrc : null;
   return <article className="bean-card">
+    {imageSrc ? <img className="bean-card__image" src={imageSrc} alt="" loading="lazy" onError={() => setFailedSrc(imageSrc)} /> : <div className="bean-card__image bean-card__image--placeholder" aria-hidden="true">☕</div>}
     <div className="origin-index" aria-hidden="true"><span>{String(item.originalIndex + 1).padStart(2, '0')}</span><i /></div>
     <div className="bean-card__identity"><p>{item.brand ?? '品牌未知'}</p><h3>{item.bean.name}</h3><span>{item.bean.importedFacts?.originOrVariety ?? '产地 / 品种未知'}</span></div>
     <div className="flavor-spectrum" aria-label={item.bean.flavorNotes.length ? `风味：${item.bean.flavorNotes.join('、')}` : '风味未知'}>{item.bean.flavorNotes.length ? item.bean.flavorNotes.slice(0, 4).map((note, index) => <span key={note} style={{ '--spectrum-index': index } as CSSProperties}>{note}</span>) : <span>待补风味</span>}</div>

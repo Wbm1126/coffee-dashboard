@@ -82,6 +82,19 @@ function flavorNotes(value: string | undefined): string[] | undefined {
   return notes.length ? notes : undefined;
 }
 
+function imageUrl(product: Record<string, unknown> | undefined, meta: Map<string, string>, pageUrl: string): string | undefined {
+  const raw = product?.image ?? meta.get('og:image') ?? meta.get('twitter:image');
+  const first = Array.isArray(raw) ? raw[0] : raw;
+  const value = first && typeof first === 'object' ? text((first as Record<string, unknown>).url) : text(first);
+  if (!value) return undefined;
+  try {
+    const resolved = new URL(value, pageUrl);
+    return ['http:', 'https:'].includes(resolved.protocol) ? resolved.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function parseProductMetadata(input: { url: string; html: string; capturedAt: string }): CollectionCandidate {
   const product = jsonLdProduct(input.html);
   const meta = metaIndex(input.html);
@@ -101,10 +114,12 @@ export function parseProductMetadata(input: { url: string; html: string; capture
     referencePrice: Number.isFinite(amount) && amount! >= 0 ? { amount: amount!, currency: (text(offers?.priceCurrency) ?? 'CNY').slice(0, 3).toUpperCase() } : undefined,
   };
   if (!fields.beanName) throw new ProductMetadataError('no_product_fields', '页面没有可确认的商品名称，请改用手工录入。');
+  const image = imageUrl(product, meta, input.url);
   return {
     sourceUrl: input.url,
     title: productName!,
     capturedAt: input.capturedAt,
+    ...(image ? { imageUrl: image } : {}),
     // Generic metadata extraction cannot establish that a host is an official
     // brand/store. Reserve `official` for a future explicit adapter.
     sourceKind: 'search',

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { createCollectionService, type CollectionService } from '../../collectors/service.js';
+import { cacheProductImage } from '../../collectors/image-cache.js';
 import { buildCollectionMergePreview } from '../../collectors/merge-preview.js';
 import { ProductMetadataError } from '../../collectors/parse/metadata.js';
 import { SafeUrlFetchError, validateExternalUrl, validateSourceUrl } from '../../collectors/url-policy.js';
@@ -218,6 +219,10 @@ export function registerCollectionRoutes(app: FastifyInstance, repository: JsonR
       }
       const replay = replayCompletedOperation(reply, input, requestHash, await repository.read());
       if (replay) return replay;
+      // U7：图片缓存在确认事务内同步完成（受限下载 ≤2MB/10s）；失败只留远程地址，绝不阻塞入库。
+      const localImage = input.candidate.imageUrl
+        ? await cacheProductImage({ dataDir: repository.dataDir, imageUrl: input.candidate.imageUrl })
+        : null;
       let savedBeanId: string | null = null;
       const data = await repository.mutate(input.expectedRevision, (draft, nextRevision) => {
         const now = new Date().toISOString();
@@ -237,13 +242,19 @@ export function registerCollectionRoutes(app: FastifyInstance, repository: JsonR
         const sourceId = input.candidate.sourceUrl ? `collection:${input.candidate.sourceUrl}` : 'collection:manual';
         applyAcceptedFields(draft, bean.id, input.acceptedFields, sourceId, now);
         if (input.candidate.sourceUrl) {
-          draft.productSources.push({ id: randomUUID(), beanId: bean.id, url: input.candidate.sourceUrl, title: input.candidate.title, imageUrl: null, localImagePath: null, imageSource: null, capturedAt: input.candidate.capturedAt, fields: sourceFields(input.candidate) });
+          draft.productSources.push({
+            id: randomUUID(), beanId: bean.id, url: input.candidate.sourceUrl, title: input.candidate.title,
+            imageUrl: input.candidate.imageUrl ?? null, localImagePath: localImage,
+            imageSource: input.candidate.imageUrl && /^https?:\/\//i.test(input.candidate.imageUrl) ? new URL(input.candidate.imageUrl).host : null,
+            capturedAt: input.candidate.capturedAt, fields: sourceFields(input.candidate),
+          });
         }
         savedBeanId = bean.id;
         draft.collectionOperations ??= [];
         draft.collectionOperations.push({ key: input.operationKey, requestHash, action: input.action, beanId: bean.id, dataRevision: nextRevision, completedAt: now });
         finishFactMutation(draft, now, nextRevision);
       });
+      // U7：本地图片缓存已在确认事务内完成；缓存失败只影响陈列，不影响已保存数据。
       return reply.code(input.action === 'create' ? 201 : 200).send({ dataRevision: data.dataRevision, beanId: savedBeanId, action: input.action, replayed: false });
     } catch (error) {
       if (error instanceof RevisionConflictError) {
