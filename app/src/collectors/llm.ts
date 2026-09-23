@@ -13,8 +13,8 @@ import { COLLECTION_FIELD_KEYS, CollectionFieldsSchema, SearchCandidateSchema, t
 // 调参常量集中在此，避免提示词与代码双份维护。
 const MAX_LLM_CANDIDATES = 5;
 const LLM_TEMPERATURE = 0.2;
-const SEARCH_TIMEOUT_MS = 15_000;
-const EXTRACT_TIMEOUT_MS = 20_000;
+const SEARCH_TIMEOUT_MS = 45_000;
+const EXTRACT_TIMEOUT_MS = 45_000;
 /** 默认 chat 网络预算：供 service.ts 的默认 ChatFn 使用。 */
 export const CHAT_TIMEOUT_MS = 30_000;
 
