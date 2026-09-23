@@ -1,12 +1,13 @@
-// U8 真实网络冒烟（子集）：DDG 搜索可达性 + 真实可达页面解析（含无商品字段的失败场景回退验证）。
+// U8 真实网络冒烟（子集，固定走规则层/DDG，不依赖本机 LLM 配置）：
+// DDG 搜索可达性 + 真实可达页面解析（含无商品字段的失败场景回退验证）。
 import { createCollectionService } from '../src/collectors/service.js';
 
-const service = createCollectionService();
+const service = createCollectionService({ llmConfig: null });
 const results: Array<{ scenario: string; ok: boolean; detail: string }> = [];
 
-// 场景 1：DDG 关键词搜索（境内网络通常不可达——预期记录真实结果而非假定成功）。
+// 场景 1：DDG 关键词搜索（境内网络/代理 fake-ip 环境通常不可达——如实记录结果）。
 try {
-  const candidates = await service.search('乔治队长 黑猫拼配');
+  const { candidates } = await service.search('乔治队长 黑猫拼配');
   results.push({ scenario: 'DDG 搜索', ok: candidates.length > 0, detail: `${candidates.length} 条候选` });
 } catch (error) {
   results.push({ scenario: 'DDG 搜索', ok: false, detail: error instanceof Error ? error.message : String(error) });
