@@ -83,8 +83,14 @@ export function App() {
     window.setTimeout(() => {
       document.getElementById('record-studio')?.scrollIntoView({ behavior: 'auto' });
       if (focus === 'review') document.querySelector<HTMLElement>('[aria-label="美式评分"], [aria-label="奶咖评分"]')?.focus();
-      else document.getElementById('record-studio')?.querySelector<HTMLElement>('select, input')?.focus();
+      else document.querySelector<HTMLElement>('[aria-labelledby="drinking-title"] select, [aria-labelledby="drinking-title"] input')?.focus();
     }, 0);
+  };
+  // 离开记录视图前拦截：编辑器草稿在组件内部，卸载即丢失。
+  const switchView = (next: PrimaryView) => {
+    if (view === 'records' && next !== 'records' && (purchaseDirty || drinkingDirty)
+      && !window.confirm('当前记录还有未保存修改，确定离开吗？')) return;
+    setView(next);
   };
   const goAdd = () => {
     setView('add');
@@ -109,7 +115,7 @@ export function App() {
         <p className="masthead-note">把购买和饮用分开记录，让每一次喜欢都有来路。</p>
         <nav className="primary-nav" aria-label="主导航">
           {PRIMARY_VIEWS.map((item) => (
-            <button key={item.key} type="button" aria-current={view === item.key} onClick={() => setView(item.key)}>{item.label}</button>
+            <button key={item.key} type="button" aria-current={view === item.key} onClick={() => switchView(item.key)}>{item.label}</button>
           ))}
         </nav>
       </header>

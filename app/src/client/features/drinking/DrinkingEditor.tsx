@@ -4,6 +4,7 @@ import type { BrewMethod, BrewParams, CoffeeData, Repurchase, Review } from '../
 import { formatLocalDate } from '../../local-date';
 import { usePostSaveRefresh } from '../../use-post-save-refresh';
 import { BREW_METHOD_OPTIONS, GRADE_OPTIONS, REPURCHASE_OPTIONS, REVIEW_SCORE_OPTIONS, REVIEW_STATE_OPTIONS } from '../reviews/review-options';
+import { latestBrewRecipe } from './brew-recipe';
 
 type DrinkRecord = CoffeeData['drinkingRecords'][number];
 
@@ -41,11 +42,7 @@ function describeBrewParams(params: BrewParams | null): string {
   return parts.join(' · ');
 }
 
-// 全空参数不算"有配方"：编辑器总是提交完整对象，全空记录不应遮蔽更早的真实配方。
-function hasBrewParams(params: BrewParams | null): params is BrewParams {
-  return !!params && Object.values(params).some((value) => value !== null);
-}
-
+// 全空参数不算"有配方"的定义已上移到 ./brew-recipe.ts，由详情抽屉与编辑器共用。
 export function DrinkingEditor({ csrfToken, data, initialRecord, onDataChanged, onSaved, onDirtyChange, onCancelEdit }: Props) {
   const beans = data.beans.filter((bean) => !bean.archivedAt || bean.id === initialRecord?.beanId); const first = beans[0]?.id ?? '';
   const initialBeanId = initialRecord?.beanId ?? first;
@@ -67,9 +64,10 @@ export function DrinkingEditor({ csrfToken, data, initialRecord, onDataChanged, 
   const trackReview = track.key === 'americanoReview' ? americanoReview : milkReview;
   const setTrackReview = (review: Review) => { if (track.key === 'americanoReview') setAmericanoReview(review); else setMilkReview(review); };
   // 照上次再来一杯：取该豆最近一条带真实冲煮参数的记录，预填方式/参数/萃取备注；只复制配方，不改评价状态。
-  const lastBrew = useMemo(() => data.drinkingRecords
-    .filter((record) => record.beanId === selectedBean && !record.deletedAt && hasBrewParams(record.brewParams) && record.id !== initialRecord?.id)
-    .sort((left, right) => (right.drankOn + right.createdAt).localeCompare(left.drankOn + left.createdAt))[0] ?? null, [data.drinkingRecords, selectedBean, initialRecord?.id]);
+  const lastBrew = useMemo(
+    () => latestBrewRecipe(data.drinkingRecords.filter((record) => record.beanId === selectedBean && record.id !== initialRecord?.id)),
+    [data.drinkingRecords, selectedBean, initialRecord?.id],
+  );
   const applyLastBrew = () => {
     if (!lastBrew?.brewParams) return;
     setBrewMethod(lastBrew.brewMethod);

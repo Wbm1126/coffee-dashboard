@@ -1,4 +1,5 @@
 import { isDrinkingRecordReviewComplete } from '../../../domain/review-completeness.js';
+import { compareByRecency } from '../drinking/brew-recipe.js';
 import type { CoffeeData } from '../../../domain/schema.js';
 
 export interface HomeDrinkLine {
@@ -16,16 +17,16 @@ export interface HomeBeanLine {
 }
 
 function sortedByRecency(records: CoffeeData['drinkingRecords']): CoffeeData['drinkingRecords'] {
-  return [...records].sort((left, right) => (right.drankOn + right.createdAt).localeCompare(left.drankOn + left.createdAt));
+  return [...records].sort(compareByRecency);
 }
 
 // 当前在喝：有未喝完的在库购买项（bagStatus = drinking）的豆。
 export function currentlyDrinkingBeans(data: CoffeeData): HomeBeanLine[] {
   const brands = new Map(data.brands.map((brand) => [brand.id, brand.name]));
+  const activePurchaseIds = new Set(data.purchases.filter((purchase) => !purchase.deletedAt).map((purchase) => purchase.id));
   const drinkingBeanIds = new Set(
     data.purchaseItems
-      .filter((item) => item.bagStatus === 'drinking')
-      .filter((item) => data.purchases.find((purchase) => purchase.id === item.purchaseId && !purchase.deletedAt))
+      .filter((item) => item.bagStatus === 'drinking' && activePurchaseIds.has(item.purchaseId))
       .map((item) => item.beanId),
   );
   return data.beans
@@ -33,10 +34,10 @@ export function currentlyDrinkingBeans(data: CoffeeData): HomeBeanLine[] {
     .map((bean) => ({ beanId: bean.id, name: bean.name, brand: bean.brandId ? brands.get(bean.brandId) ?? null : null, roastLevel: bean.roastLevel }));
 }
 
-// 最近喝过：按日期倒序的可见饮用记录（含未评价，评分取有分的轨）。
+// 最近喝过：按日期倒序的可见饮用记录（排除草稿；评分取有分的轨）。
 export function recentDrinks(data: CoffeeData, limit = 5): HomeDrinkLine[] {
   const beanNames = new Map(data.beans.map((bean) => [bean.id, bean.name]));
-  return sortedByRecency(data.drinkingRecords.filter((record) => !record.deletedAt))
+  return sortedByRecency(data.drinkingRecords.filter((record) => !record.deletedAt && !record.isDraft))
     .slice(0, limit)
     .map((record) => ({
       record,

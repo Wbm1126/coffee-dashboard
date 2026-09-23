@@ -1,5 +1,6 @@
 import type { CoffeeData } from '../../../domain/schema';
 import { CatchUpQueue } from '../catch-up/CatchUpQueue';
+import { BREW_METHOD_OPTIONS } from '../reviews/review-options';
 import { currentlyDrinkingBeans, pendingReviewDrinks, recentDrinks, recentlyAddedBeans } from './home-model';
 
 interface Props {
@@ -23,7 +24,7 @@ export function HomeView({ csrfToken, data, onDataChanged, onGoAdd, onGoRecords 
     </section>
     <section className="home-module" aria-labelledby="home-recent-title">
       <h3 id="home-recent-title">最近喝过</h3>
-      {drinks.length ? <ol>{drinks.map((line) => <li key={line.record.id}><b>{line.beanName}</b><small>{line.record.drankOn} · {line.record.brewMethod}{line.score !== null ? ` · ${line.score}/5` : ' · 待评分'}</small>{line.record.feeling && <small className="home-feeling">{line.record.feeling}</small>}</li>)}</ol> : <p className="home-empty">还没有饮用记录；喝一杯，用一分钟记下来。</p>}
+      {drinks.length ? <ol>{drinks.map((line) => <li key={line.record.id}><b>{line.beanName}</b><small>{line.record.drankOn} · {BREW_METHOD_OPTIONS.find((option) => option.value === line.record.brewMethod)?.label ?? line.record.brewMethod}{line.score !== null ? ` · ${line.score}/5` : ' · 待评分'}</small>{line.record.feeling && <small className="home-feeling">{line.record.feeling}</small>}</li>)}</ol> : <p className="home-empty">还没有饮用记录；喝一杯，用一分钟记下来。</p>}
     </section>
     <section className="home-module home-module--pending" aria-labelledby="home-pending-title">
       <h3 id="home-pending-title">待评价{pending.length > 0 && ` · ${pending.length}`}</h3>

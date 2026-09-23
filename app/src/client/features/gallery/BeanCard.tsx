@@ -1,20 +1,23 @@
 import type { CSSProperties } from 'react';
 import type { GalleryItem } from './gallery-model';
 import { BEAN_BADGE_LABELS } from './gallery-options';
+import { BREW_METHOD_OPTIONS, REVIEW_SCORE_MAX } from '../reviews/review-options';
 
 interface Props { item: GalleryItem; selected: boolean; onSelect: (selected: boolean) => void; onOpen: (trigger: HTMLButtonElement) => void; onFollow: (trigger: HTMLButtonElement) => void; onPurchase: () => void; followBusy: boolean; followDisabled: boolean }
 
 export function BeanCard({ item, selected, onSelect, onOpen, onFollow, onPurchase, followBusy, followDisabled }: Props) {
   const nextAction = item.badges.includes('drank_pending_review') ? '补全未完成评价' : item.badges.includes('purchased_waiting') ? '饮用后记录体验' : '回看商品、购买与品鉴历史';
-  // 最近喝法/评分：取最近一条可见饮用记录，让卡片直接回答"上一次喝是什么感觉"。
+  // 最近喝法/评分：取最近一条可见饮用记录，评分按该喝法的主轨取值。
   const latestDrink = [...item.drinkingHistory].sort((left, right) => (right.record.drankOn + right.record.createdAt).localeCompare(left.record.drankOn + left.record.createdAt))[0];
-  const latestScore = latestDrink ? latestDrink.record.milkReview?.score ?? latestDrink.record.americanoReview?.score ?? null : null;
+  const primaryTrack = latestDrink && latestDrink.record.brewMethod === 'milk' ? latestDrink.record.milkReview : latestDrink?.record.americanoReview;
+  const latestScore = primaryTrack?.score ?? null;
+  const latestMethodLabel = BREW_METHOD_OPTIONS.find((option) => option.value === latestDrink?.record.brewMethod)?.label;
   return <article className="bean-card">
     <div className="origin-index" aria-hidden="true"><span>{String(item.originalIndex + 1).padStart(2, '0')}</span><i /></div>
     <div className="bean-card__identity"><p>{item.brand ?? '品牌未知'}</p><h3>{item.bean.name}</h3><span>{item.bean.importedFacts?.originOrVariety ?? '产地 / 品种未知'}</span></div>
     <div className="flavor-spectrum" aria-label={item.bean.flavorNotes.length ? `风味：${item.bean.flavorNotes.join('、')}` : '风味未知'}>{item.bean.flavorNotes.length ? item.bean.flavorNotes.slice(0, 4).map((note, index) => <span key={note} style={{ '--spectrum-index': index } as CSSProperties}>{note}</span>) : <span>待补风味</span>}</div>
     <dl className="bean-card__facts"><div><dt>烘焙</dt><dd>{item.roast ?? '未知'}</dd></div><div><dt>参考价</dt><dd>{item.price === null ? '未知' : `¥${item.price}`}</dd></div><div><dt>个人等级</dt><dd>{item.grade ?? '未知'}</dd></div></dl>
-    {latestDrink && <p className="bean-card__last-drink">最近喝：{latestDrink.record.drankOn} · {latestDrink.record.brewMethod}{latestScore !== null ? ` · ${latestScore}/5` : ''}</p>}
+    {latestDrink && <p className="bean-card__last-drink">最近喝：{latestDrink.record.drankOn} · {latestMethodLabel ?? latestDrink.record.brewMethod}{latestScore !== null ? ` · ${latestScore}/${REVIEW_SCORE_MAX}` : ''}</p>}
     <div className="bean-card__badges">{item.badges.length ? item.badges.map((badge) => <span key={badge} data-status={badge}>{BEAN_BADGE_LABELS[badge]}</span>) : <span>尚未归类</span>}</div>
     <div className="bean-card__actions">
       <p className="bean-card__next-action"><strong>下一步：</strong>{nextAction}</p>
