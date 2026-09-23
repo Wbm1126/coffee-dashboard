@@ -219,6 +219,10 @@ export function registerCollectionRoutes(app: FastifyInstance, repository: JsonR
       }
       const replay = replayCompletedOperation(reply, input, requestHash, await repository.read());
       if (replay) return replay;
+      // U7：图片缓存在确认事务内同步完成（受限下载 ≤2MB/10s）；失败只留远程地址，绝不阻塞入库。
+      const localImage = input.candidate.imageUrl
+        ? await cacheProductImage({ dataDir: repository.dataDir, imageUrl: input.candidate.imageUrl })
+        : null;
       let savedBeanId: string | null = null;
       const data = await repository.mutate(input.expectedRevision, (draft, nextRevision) => {
         const now = new Date().toISOString();
@@ -240,7 +244,8 @@ export function registerCollectionRoutes(app: FastifyInstance, repository: JsonR
         if (input.candidate.sourceUrl) {
           draft.productSources.push({
             id: randomUUID(), beanId: bean.id, url: input.candidate.sourceUrl, title: input.candidate.title,
-            imageUrl: input.candidate.imageUrl ?? null, localImagePath: null, imageSource: input.candidate.imageUrl ? new URL(input.candidate.imageUrl).host : null,
+            imageUrl: input.candidate.imageUrl ?? null, localImagePath: localImage,
+            imageSource: input.candidate.imageUrl && /^https?:\/\//i.test(input.candidate.imageUrl) ? new URL(input.candidate.imageUrl).host : null,
             capturedAt: input.candidate.capturedAt, fields: sourceFields(input.candidate),
           });
         }
@@ -249,24 +254,7 @@ export function registerCollectionRoutes(app: FastifyInstance, repository: JsonR
         draft.collectionOperations.push({ key: input.operationKey, requestHash, action: input.action, beanId: bean.id, dataRevision: nextRevision, completedAt: now });
         finishFactMutation(draft, now, nextRevision);
       });
-      // U7：确认成功后异步缓存商品图到本地（失败静默，只留远程 imageUrl，不影响任何业务）。
-      if (input.candidate.sourceUrl && input.candidate.imageUrl && savedBeanId) {
-        const beanIdForImage = savedBeanId;
-        const sourceUrlForImage = input.candidate.sourceUrl;
-        const imageUrlForCache = input.candidate.imageUrl;
-        void (async () => {
-          try {
-            const name = await cacheProductImage({ dataDir: repository.dataDir, imageUrl: imageUrlForCache });
-            if (!name) return;
-            await repository.mutate((await repository.read()).dataRevision, (draft) => {
-              const source = draft.productSources.find((item) => item.beanId === beanIdForImage && item.url === sourceUrlForImage);
-              if (source && source.localImagePath === null) source.localImagePath = name;
-            });
-          } catch (imageError) {
-            console.warn('[collect] 商品图缓存失败（不影响已保存数据）：', imageError instanceof Error ? imageError.message : imageError);
-          }
-        })();
-      }
+      // U7：本地图片缓存已在确认事务内完成；缓存失败只影响陈列，不影响已保存数据。
       return reply.code(input.action === 'create' ? 201 : 200).send({ dataRevision: data.dataRevision, beanId: savedBeanId, action: input.action, replayed: false });
     } catch (error) {
       if (error instanceof RevisionConflictError) {

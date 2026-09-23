@@ -256,7 +256,13 @@ export function createSafeUrlFetcher(options: {
   const maxRedirects = options.maxRedirects ?? 4;
 
   // 共享的校验+DNS+重定向循环：html 走文本，资源走二进制（图片缓存用）。
-  const follow = async (input: string, allowedContentTypes: readonly string[], deadlineAt: number): Promise<{ finalUrl: URL; body: Buffer; contentType: string }> => {
+  // 错误码与文案按用途区分，保证 fetchHtml 的既有契约不变。
+  const labelsFor = (kind: 'html' | 'resource') => kind === 'html'
+    ? { contentType: 'content_type_not_html', contentTypeMessage: '该链接不是可解析的 HTML 商品页面。', tooLarge: '商品页面过大，未读取完整内容。' }
+    : { contentType: 'content_type_not_allowed', contentTypeMessage: '链接返回的内容类型不在允许范围内。', tooLarge: '资源超过大小限制，未读取完整内容。' };
+
+  const follow = async (input: string, allowedContentTypes: readonly string[], deadlineAt: number, kind: 'html' | 'resource'): Promise<{ finalUrl: URL; body: Buffer; contentType: string }> => {
+    const labels = labelsFor(kind);
     let url = validateExternalUrl(input);
     for (let redirect = 0; redirect <= maxRedirects; redirect += 1) {
       const remaining = deadlineAt - Date.now();
@@ -268,7 +274,8 @@ export function createSafeUrlFetcher(options: {
       const responseRemaining = deadlineAt - Date.now();
       if (responseRemaining <= 0) throw error('request_timeout', '商品页面请求超时。');
       const response = await withinDeadline(transport({ url, address: addresses[0], timeoutMs: responseRemaining, maxBytes }), responseRemaining);
-      if (Buffer.byteLength(response.body, 'utf8') > maxBytes) throw error('response_too_large', '商品页面过大，未读取完整内容。');
+      const responseSize = response.bodyBuffer?.length ?? Buffer.byteLength(response.body, 'utf8');
+      if (responseSize > maxBytes) throw error('response_too_large', labels.tooLarge);
       if (REDIRECT_STATUS.has(response.statusCode)) {
         const location = headerValue(response.headers, 'location');
         if (!location) throw error('redirect_missing_location', '商品页面重定向无目标地址。');
@@ -278,7 +285,7 @@ export function createSafeUrlFetcher(options: {
       }
       if (response.statusCode < 200 || response.statusCode >= 300) throw error('http_status', '商品页面暂时无法读取。', response.statusCode);
       const contentType = headerValue(response.headers, 'content-type')?.toLowerCase() ?? '';
-      if (!allowedContentTypes.some((allowed) => contentType.includes(allowed))) throw error('content_type_not_html', '该链接不是可解析的 HTML 商品页面。');
+      if (!allowedContentTypes.some((allowed) => contentType.includes(allowed))) throw error(labels.contentType, labels.contentTypeMessage);
       return { finalUrl: url, body: response.bodyBuffer ?? Buffer.from(response.body, 'utf8'), contentType };
     }
     throw error('redirect_limit', '商品页面重定向次数过多。');
@@ -286,12 +293,12 @@ export function createSafeUrlFetcher(options: {
 
   return {
     async fetchHtml(input: string): Promise<SafeHtmlResult> {
-      const result = await follow(input, ['text/html', 'application/xhtml+xml'], Date.now() + timeoutMs);
+      const result = await follow(input, ['text/html', 'application/xhtml+xml'], Date.now() + timeoutMs, 'html');
       return { html: result.body.toString('utf8'), finalUrl: result.finalUrl.toString() };
     },
     /** 下载受限资源（如商品图片）：二进制安全，内容类型白名单校验。 */
     async fetchResource(input: string, allowedContentTypes: readonly string[]): Promise<{ finalUrl: string; body: Buffer; contentType: string }> {
-      const result = await follow(input, allowedContentTypes, Date.now() + timeoutMs);
+      const result = await follow(input, allowedContentTypes, Date.now() + timeoutMs, 'resource');
       return { finalUrl: result.finalUrl.toString(), body: result.body, contentType: result.contentType };
     },
   };

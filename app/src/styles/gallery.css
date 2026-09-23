@@ -37,7 +37,7 @@
 .gallery-message { padding: 12px 15px; border-left: 4px solid var(--leaf); background: rgba(155,199,184,.2); }
 
 .bean-gallery { display: grid; grid-template-columns: repeat(12, 1fr); gap: 18px; }
-.bean-card { position: relative; display: grid; grid-column: span 4; grid-template-rows: auto auto 1fr auto auto; min-width: 0; min-height: 430px; overflow: hidden; padding: 25px 20px 20px 35px; border: 1px solid var(--line); background: var(--paper-bright); box-shadow: 0 12px 30px rgba(72,50,36,.08); }
+.bean-card { position: relative; display: grid; grid-column: span 4; grid-template-rows: auto auto auto 1fr auto auto; min-width: 0; min-height: 430px; overflow: hidden; padding: 25px 20px 20px 35px; border: 1px solid var(--line); background: var(--paper-bright); box-shadow: 0 12px 30px rgba(72,50,36,.08); }
 .bean-card:nth-child(5n+1),.bean-card:nth-child(5n+4) { grid-column: span 5; }
 .bean-card:nth-child(5n+2),.bean-card:nth-child(5n+3) { grid-column: span 7; }
 .origin-index { position: absolute; inset: 0 auto 0 8px; display: grid; grid-template-rows: auto 1fr; justify-items: center; width: 18px; padding-top: 16px; }

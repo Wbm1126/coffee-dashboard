@@ -41,7 +41,8 @@ describe('U7 商品图片', () => {
   });
 
   it('isSafeImageName 只放行白名单文件名', () => {
-    expect(isSafeImageName('abcdef12.png')).toBe(true);
+    expect(isSafeImageName('abcdef1200000000.png')).toBe(true);
+    expect(isSafeImageName('abcdef12.png')).toBe(false);
     expect(isSafeImageName('../secret.txt')).toBe(false);
     expect(isSafeImageName('abcdef12.exe')).toBe(false);
     expect(resolveImageFile('/data', '../secret.txt')).toBeNull();
@@ -53,14 +54,14 @@ describe('U7 商品图片', () => {
     const repository = new JsonRepository(directory);
     await repository.initialize();
     await mkdir(join(directory, 'images'), { recursive: true });
-    await writeFile(join(directory, 'images', 'abcdef12.png'), Buffer.from('89504e47', 'hex'));
+    await writeFile(join(directory, 'images', 'abcdef1200000000.png'), Buffer.from('89504e47', 'hex'));
     const app = await buildApp({ repository, serveStatic: false, csrfToken: 'collect-token' });
 
     const missing = await app.inject({ method: 'GET', url: '/api/images/ffffffff.png' });
     expect(missing.statusCode).toBe(404);
     const traversal = await app.inject({ method: 'GET', url: '/api/images/..%2Fcoffee-data.json' });
     expect(traversal.statusCode).toBe(404);
-    const found = await app.inject({ method: 'GET', url: '/api/images/abcdef12.png' });
+    const found = await app.inject({ method: 'GET', url: '/api/images/abcdef1200000000.png' });
     expect(found.statusCode).toBe(200);
     expect(found.headers['content-type']).toBe('image/png');
     await app.close();
