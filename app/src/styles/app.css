@@ -657,7 +657,7 @@
 .brew-params { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-top: 16px; }
 .brew-params legend { padding: 0 7px; font: 700 15px/1 var(--font-display); }
 .brew-params label { display: grid; gap: 6px; color: var(--ink-muted); font-size: 12px; }
-.brew-params input { min-width: 0; width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--line); color: var(--ink); background: var(--paper); }
+.record-card .brew-params input { min-height: 40px; padding: 8px 10px; }
 .record-card:first-child { border-radius: 26px 4px 4px 4px; }
 .record-card:nth-child(2) { border-radius: 4px 4px 26px 4px; }
 .record-card h3,.record-timeline h3 { margin: 0 0 20px; font: 700 29px/1.15 var(--font-display); }

@@ -32,12 +32,18 @@ function describeBrewParams(params: BrewParams | null): string {
   if (!params) return '';
   const parts: string[] = [];
   if (params.doseGrams !== null) parts.push(`${params.doseGrams}g粉`);
+  if (params.yieldGrams !== null) parts.push(`${params.yieldGrams}g液`);
   if (params.waterGrams !== null) parts.push(`${params.waterGrams}g水`);
   if (params.milkGrams !== null) parts.push(`${params.milkGrams}g奶`);
   if (params.temperatureC !== null) parts.push(`${params.temperatureC}°C`);
   if (params.grindSetting !== null) parts.push(`${params.grindSetting}研磨`);
   if (params.brewTimeSeconds !== null) parts.push(`${params.brewTimeSeconds}秒`);
   return parts.join(' · ');
+}
+
+// 全空参数不算"有配方"：编辑器总是提交完整对象，全空记录不应遮蔽更早的真实配方。
+function hasBrewParams(params: BrewParams | null): params is BrewParams {
+  return !!params && Object.values(params).some((value) => value !== null);
 }
 
 export function DrinkingEditor({ csrfToken, data, initialRecord, onDataChanged, onSaved, onDirtyChange, onCancelEdit }: Props) {
@@ -60,18 +66,15 @@ export function DrinkingEditor({ csrfToken, data, initialRecord, onDataChanged, 
   const track = trackFor(brewMethod);
   const trackReview = track.key === 'americanoReview' ? americanoReview : milkReview;
   const setTrackReview = (review: Review) => { if (track.key === 'americanoReview') setAmericanoReview(review); else setMilkReview(review); };
-  // 快速评分：直接写当前轨并置为已评价。
-  const setQuickScore = (score: number | null) => setTrackReview({ ...trackReview, state: 'reviewed', score });
-  // 照上次再来一杯：取该豆最近一条带冲煮参数的记录，预填方式/参数/萃取备注。
+  // 照上次再来一杯：取该豆最近一条带真实冲煮参数的记录，预填方式/参数/萃取备注；只复制配方，不改评价状态。
   const lastBrew = useMemo(() => data.drinkingRecords
-    .filter((record) => record.beanId === selectedBean && !record.deletedAt && record.brewParams && record.id !== initialRecord?.id)
+    .filter((record) => record.beanId === selectedBean && !record.deletedAt && hasBrewParams(record.brewParams) && record.id !== initialRecord?.id)
     .sort((left, right) => (right.drankOn + right.createdAt).localeCompare(left.drankOn + left.createdAt))[0] ?? null, [data.drinkingRecords, selectedBean, initialRecord?.id]);
   const applyLastBrew = () => {
     if (!lastBrew?.brewParams) return;
     setBrewMethod(lastBrew.brewMethod);
     setBrewParams(structuredClone(lastBrew.brewParams));
     setExtractionNote(lastBrew.extractionNote ?? '');
-    setTrackReview({ ...trackReview, state: 'reviewed', score: trackReview.score });
   };
   const snapshot = JSON.stringify({ selectedBean, purchaseItemId, drankOn, brewMethod, extractionNote, brewParams, feeling, americanoReview, milkReview, grade, repurchase, summary });
   const [baseline, setBaseline] = useState(snapshot); const dirty = snapshot !== baseline;
@@ -100,20 +103,20 @@ export function DrinkingEditor({ csrfToken, data, initialRecord, onDataChanged, 
       <label>咖啡豆<select aria-label="饮用咖啡豆" value={selectedBean} onChange={(event) => selectBean(event.target.value)}>{beans.map((bean) => <option key={bean.id} value={bean.id}>{bean.name}</option>)}</select></label>
       <label>饮用日期<input aria-label="饮用日期" type="date" value={drankOn} onChange={(event) => setDrankOn(event.target.value)} /></label>
       <label>冲煮方式<select aria-label="冲煮方式" value={brewMethod} onChange={(event) => setBrewMethod(event.target.value as BrewMethod)}>{BREW_METHOD_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-      <label>{track.label}评分<select aria-label={`${track.label}评分`} required value={trackReview.score ?? ''} onChange={(event) => setQuickScore(event.target.value ? Number(event.target.value) : null)}><option value="">请选择</option>{REVIEW_SCORE_OPTIONS.map((score) => <option key={score} value={score}>{score.toFixed(1)}</option>)}</select></label>
+      <label>{track.label}评分<select aria-label={`${track.label}评分`} required={trackReview.state === 'reviewed'} value={trackReview.score ?? ''} onChange={(event) => { const score = event.target.value ? Number(event.target.value) : null; setTrackReview(score === null ? { ...trackReview, state: 'unreviewed', score: null } : { ...trackReview, state: 'reviewed', score }); }}><option value="">请选择</option>{REVIEW_SCORE_OPTIONS.map((score) => <option key={score} value={score}>{score.toFixed(1)}</option>)}</select></label>
       <label className="field-wide">一句感受<input aria-label="饮用感受" value={feeling} onChange={(event) => setFeeling(event.target.value)} placeholder="一句话记录当下的味道与感受" /></label></div>
       {lastBrew && <p className="last-brew-note">上次冲煮（{lastBrew.drankOn}）：{describeBrewParams(lastBrew.brewParams) || '未记录参数'}<button type="button" className="text-button" onClick={applyLastBrew}>照上次再来一杯</button></p>}
       <details className="brew-details"><summary>展开详细记录（风味 / 优缺点 / 萃取参数 / 综合结论）</summary>
         <label className="field-wide">萃取备注<input aria-label="萃取备注" value={extractionNote} onChange={(event) => setExtractionNote(event.target.value)} /></label>
         <Dimension label={track.label} value={trackReview} onChange={setTrackReview} />
         <fieldset className="brew-params"><legend>冲煮参数（留空 = 未记录，供下次复用）</legend>
-          <label>粉量 g<input aria-label="粉量克数" type="number" min="0" step="0.1" value={brewParams.doseGrams ?? ''} onChange={(event) => setBrewParam('doseGrams', event.target.value ? Number(event.target.value) : null)} /></label>
-          <label>液量 g<input aria-label="液量克数" type="number" min="0" step="0.1" value={brewParams.yieldGrams ?? ''} onChange={(event) => setBrewParam('yieldGrams', event.target.value ? Number(event.target.value) : null)} /></label>
-          <label>时间 秒<input aria-label="冲煮秒数" type="number" min="0" step="1" value={brewParams.brewTimeSeconds ?? ''} onChange={(event) => setBrewParam('brewTimeSeconds', event.target.value ? Number(event.target.value) : null)} /></label>
+          <label>粉量 g<input aria-label="粉量克数" type="number" min="0.1" step="0.1" value={brewParams.doseGrams ?? ''} onChange={(event) => setBrewParam('doseGrams', event.target.value ? Number(event.target.value) : null)} /></label>
+          <label>液量 g<input aria-label="液量克数" type="number" min="0.1" step="0.1" value={brewParams.yieldGrams ?? ''} onChange={(event) => setBrewParam('yieldGrams', event.target.value ? Number(event.target.value) : null)} /></label>
+          <label>时间 秒<input aria-label="冲煮秒数" type="number" min="1" step="1" value={brewParams.brewTimeSeconds ?? ''} onChange={(event) => setBrewParam('brewTimeSeconds', event.target.value ? Number(event.target.value) : null)} /></label>
           <label>水温 °C<input aria-label="水温" type="number" min="0" max="100" step="1" value={brewParams.temperatureC ?? ''} onChange={(event) => setBrewParam('temperatureC', event.target.value ? Number(event.target.value) : null)} /></label>
           <label>研磨度<input aria-label="研磨度" value={brewParams.grindSetting ?? ''} onChange={(event) => setBrewParam('grindSetting', event.target.value || null)} /></label>
-          <label>水量 g<input aria-label="水量克数" type="number" min="0" step="0.1" value={brewParams.waterGrams ?? ''} onChange={(event) => setBrewParam('waterGrams', event.target.value ? Number(event.target.value) : null)} /></label>
-          <label>奶量 g<input aria-label="奶量克数" type="number" min="0" step="0.1" value={brewParams.milkGrams ?? ''} onChange={(event) => setBrewParam('milkGrams', event.target.value ? Number(event.target.value) : null)} /></label>
+          <label>水量 g<input aria-label="水量克数" type="number" min="0.1" step="0.1" value={brewParams.waterGrams ?? ''} onChange={(event) => setBrewParam('waterGrams', event.target.value ? Number(event.target.value) : null)} /></label>
+          <label>奶量 g<input aria-label="奶量克数" type="number" min="0.1" step="0.1" value={brewParams.milkGrams ?? ''} onChange={(event) => setBrewParam('milkGrams', event.target.value ? Number(event.target.value) : null)} /></label>
         </fieldset>
         <label>关联购买项（可选）<select aria-label="关联购买项" value={purchaseItemId} onChange={(event) => setPurchaseItemId(event.target.value)}><option value="">历史饮用 / 不关联</option>{items.map((item) => <option key={item.id} value={item.id}>{item.packageGrams ? `${item.packageGrams}g` : '规格未知'} · {item.bagStatus}</option>)}</select></label>
         <fieldset className="personal-verdict"><legend>综合结论</legend><label>个人等级<select aria-label="个人等级" value={grade} onChange={(event) => setGrade(event.target.value)}><option value="">暂不定级</option>{GRADE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
