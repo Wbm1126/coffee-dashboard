@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { createCollectionService, type CollectionService } from '../../collectors/service.js';
+import { cacheProductImage } from '../../collectors/image-cache.js';
 import { buildCollectionMergePreview } from '../../collectors/merge-preview.js';
 import { ProductMetadataError } from '../../collectors/parse/metadata.js';
 import { SafeUrlFetchError, validateExternalUrl, validateSourceUrl } from '../../collectors/url-policy.js';
@@ -237,13 +238,35 @@ export function registerCollectionRoutes(app: FastifyInstance, repository: JsonR
         const sourceId = input.candidate.sourceUrl ? `collection:${input.candidate.sourceUrl}` : 'collection:manual';
         applyAcceptedFields(draft, bean.id, input.acceptedFields, sourceId, now);
         if (input.candidate.sourceUrl) {
-          draft.productSources.push({ id: randomUUID(), beanId: bean.id, url: input.candidate.sourceUrl, title: input.candidate.title, imageUrl: null, localImagePath: null, imageSource: null, capturedAt: input.candidate.capturedAt, fields: sourceFields(input.candidate) });
+          draft.productSources.push({
+            id: randomUUID(), beanId: bean.id, url: input.candidate.sourceUrl, title: input.candidate.title,
+            imageUrl: input.candidate.imageUrl ?? null, localImagePath: null, imageSource: input.candidate.imageUrl ? new URL(input.candidate.imageUrl).host : null,
+            capturedAt: input.candidate.capturedAt, fields: sourceFields(input.candidate),
+          });
         }
         savedBeanId = bean.id;
         draft.collectionOperations ??= [];
         draft.collectionOperations.push({ key: input.operationKey, requestHash, action: input.action, beanId: bean.id, dataRevision: nextRevision, completedAt: now });
         finishFactMutation(draft, now, nextRevision);
       });
+      // U7：确认成功后异步缓存商品图到本地（失败静默，只留远程 imageUrl，不影响任何业务）。
+      if (input.candidate.sourceUrl && input.candidate.imageUrl && savedBeanId) {
+        const beanIdForImage = savedBeanId;
+        const sourceUrlForImage = input.candidate.sourceUrl;
+        const imageUrlForCache = input.candidate.imageUrl;
+        void (async () => {
+          try {
+            const name = await cacheProductImage({ dataDir: repository.dataDir, imageUrl: imageUrlForCache });
+            if (!name) return;
+            await repository.mutate((await repository.read()).dataRevision, (draft) => {
+              const source = draft.productSources.find((item) => item.beanId === beanIdForImage && item.url === sourceUrlForImage);
+              if (source && source.localImagePath === null) source.localImagePath = name;
+            });
+          } catch (imageError) {
+            console.warn('[collect] 商品图缓存失败（不影响已保存数据）：', imageError instanceof Error ? imageError.message : imageError);
+          }
+        })();
+      }
       return reply.code(input.action === 'create' ? 201 : 200).send({ dataRevision: data.dataRevision, beanId: savedBeanId, action: input.action, replayed: false });
     } catch (error) {
       if (error instanceof RevisionConflictError) {

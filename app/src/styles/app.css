@@ -667,6 +667,8 @@
 .secondary-capabilities { margin: 30px 0; }
 .secondary-capabilities summary { cursor: pointer; font: 700 18px/1.3 var(--font-display); }
 .bean-card__last-drink { margin: 10px 0 0; color: var(--ink-muted); font-size: 13px; }
+.bean-card__image { display: block; width: 100%; height: 130px; margin-bottom: 12px; object-fit: cover; border: 1px solid var(--line); }
+.bean-card__image--placeholder { display: grid; place-items: center; font-size: 34px; background: linear-gradient(135deg, rgba(155,199,184,.25), rgba(238,168,91,.18)); }
 .provenance-details { margin: 18px 0 0; color: var(--ink-muted); font-size: 13px; }
 .provenance-details summary { cursor: pointer; }
 .last-brew-note { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 14px 0 0; padding: 10px 12px; border: 1px dashed var(--line); color: var(--ink-muted); font-size: 13px; }
