@@ -20,10 +20,8 @@ const pastedText = [
 ].join('\n');
 
 // 场景 1：LLM 搜索（名称 → 候选列表）。
-let searchCandidates: Array<{ title: string; url: string }> = [];
 try {
   const { candidates, provider } = await service.search('乔治队长 黑猫拼配');
-  searchCandidates = candidates;
   log(`LLM 搜索（provider=${provider}）`, candidates.length > 0, `${candidates.length} 条候选：${candidates.slice(0, 2).map((item) => item.title).join(' / ') || '无'}`);
 } catch (error) {
   log('LLM 搜索', false, error instanceof Error ? error.message.slice(0, 80) : String(error));
