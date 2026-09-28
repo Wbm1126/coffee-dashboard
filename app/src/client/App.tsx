@@ -39,7 +39,8 @@ export function App() {
     setAuth({ mode: body.mode ?? 'local', authenticated: Boolean(body.authenticated), username: body.username ?? null });
   }, []);
   const logout = useCallback(async () => {
-    await fetch('/api/auth/logout', { method: 'POST', headers: { 'x-csrf-token': csrfToken } });
+    // 写请求统一走 JSON：空 body 也要带 content-type，否则 local-security 会拦成 415。
+    await fetch('/api/auth/logout', { method: 'POST', headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken }, body: '{}' });
     await refreshAuth();
   }, [csrfToken, refreshAuth]);
 

@@ -73,7 +73,7 @@ $env:COFFEE_DASHBOARD_DATA_DIR = 'E:\CoffeeDashboardData'
 npm start
 ```
 
-`COFFEE_DASHBOARD_CLIENT_PORT` 仅影响开发模式允许的前端来源。路径包含空格时仍需使用引号。不要让两个豆迹进程同时使用同一个数据目录。
+`COFFEE_DASHBOARD_CLIENT_PORT` 仅影响开发模式允许的前端来源。`COFFEE_DASHBOARD_ALLOWED_HOSTS` 供反向代理部署使用（逗号分隔的合法 Host 列表，例如 `coffee.example.com`；不设置时仅本机回环地址可访问）。路径包含空格时仍需使用引号。不要让两个豆迹进程同时使用同一个数据目录。
 
 ## 3. 从历史 Excel 开始
 
