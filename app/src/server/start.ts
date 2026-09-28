@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { appRoot, resolveDataDir } from './data-dir.js';
 import { JsonRepository } from '../storage/json-repository.js';
 import { buildApp } from './app.js';
+import { ADMIN_USERNAME } from './auth.js';
 
 const { dataDir } = await resolveDataDir();
 const port = Number.parseInt(process.env.COFFEE_DASHBOARD_PORT ?? '4173', 10);
@@ -17,20 +18,15 @@ const allowedHosts = (process.env.COFFEE_DASHBOARD_ALLOWED_HOSTS ?? '')
   .map((host) => host.trim().replace(/:\d{1,5}$/, ''))
   .filter(Boolean);
 
+const adminPassword = process.env.COFFEE_DASHBOARD_ADMIN_PASSWORD?.trim();
+
 const app = await buildApp({
   repository: new JsonRepository(dataDir),
   staticRoot: resolve(appRoot, 'dist', 'client'),
   allowedOrigins: devOrigins,
   allowedHosts,
   // 设置了管理密码即进入强制模式（访客只读）；未设置保持本地单用户。
-  ...(process.env.COFFEE_DASHBOARD_ADMIN_PASSWORD
-    ? {
-        adminAuth: {
-          username: 'admin',
-          password: process.env.COFFEE_DASHBOARD_ADMIN_PASSWORD,
-        },
-      }
-    : {}),
+  adminAuth: adminPassword ? { username: ADMIN_USERNAME, password: adminPassword } : undefined,
 });
 
 await app.listen({ host: '127.0.0.1', port });
