@@ -22,6 +22,15 @@ const app = await buildApp({
   staticRoot: resolve(appRoot, 'dist', 'client'),
   allowedOrigins: devOrigins,
   allowedHosts,
+  // 设置了管理密码即进入强制模式（访客只读）；未设置保持本地单用户。
+  ...(process.env.COFFEE_DASHBOARD_ADMIN_PASSWORD
+    ? {
+        adminAuth: {
+          username: 'admin',
+          password: process.env.COFFEE_DASHBOARD_ADMIN_PASSWORD,
+        },
+      }
+    : {}),
 });
 
 await app.listen({ host: '127.0.0.1', port });
