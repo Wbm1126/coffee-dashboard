@@ -62,9 +62,11 @@ describe('U9 Web 鉴权', () => {
     const login = await app.inject({ method: 'POST', url: '/api/auth/login', headers, payload: { username: 'admin', password: 'secret' } });
     const cookie = login.cookies;
     const logoutHeaders = { ...headers, cookie: cookie.map((c) => `${c.name}=${c.value}`).join('; ') };
-    await app.inject({ method: 'POST', url: '/api/auth/logout', headers: logoutHeaders });
+    const logout = await app.inject({ method: 'POST', url: '/api/auth/logout', headers: logoutHeaders, payload: {} });
+    expect(logout.statusCode).toBe(200);
     const write = await app.inject({ method: 'POST', url: '/api/beans/test/follow', headers, cookies: Object.fromEntries(cookie.map((c) => [c.name, c.value])), payload: {} });
     expect(write.statusCode).toBe(401);
+    expect(write.json().error).toBe('admin_required');
     await app.close();
   });
 });
