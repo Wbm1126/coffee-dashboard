@@ -6,12 +6,19 @@ const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 export interface LocalSecurityOptions {
   allowedOrigins?: string[];
   csrfToken?: string;
+  /** 服务器部署时的合法 Host 列表；本地默认仅回环。 */
+  allowedHosts?: string[];
 }
 
 function equalSecret(left: string, right: string): boolean {
   const leftBytes = Buffer.from(left);
   const rightBytes = Buffer.from(right);
   return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+}
+
+function hostIsAllowed(host: string, allowedHosts: string[]): boolean {
+  const normalized = host.toLowerCase().replace(/:\d{1,5}$/, '');
+  return allowedHosts.some((allowed) => normalized === allowed.toLowerCase());
 }
 
 function hostIsLoopback(host: string): boolean {
@@ -30,10 +37,11 @@ export function installLocalSecurity(
 ): string {
   const csrfToken = options.csrfToken ?? randomBytes(32).toString('base64url');
   const additionalOrigins = options.allowedOrigins ?? [];
+  const allowedHosts = options.allowedHosts ?? [];
 
   app.addHook('onRequest', async (request, reply) => {
     const host = request.headers.host ?? '';
-    if (!hostIsLoopback(host)) {
+    if (!hostIsLoopback(host) && !hostIsAllowed(host, allowedHosts)) {
       return reply.code(403).send({ error: 'host_not_allowed' });
     }
 

@@ -8,6 +8,7 @@ import { RecommendationView } from './features/recommendations/RecommendationVie
 import { CollectionWizard } from './features/collection/CollectionWizard';
 import { RecoveryPanel } from './features/recovery/RecoveryPanel';
 import { HomeView } from './features/home/HomeView';
+import { LoginDialog } from './features/auth/LoginDialog';
 import { advancePurchaseDraft, commitSnapshotState, purchaseEditorKey, readSnapshotResponse, type AppState, type EditingRecord, type PurchaseDraft } from './app-state';
 
 type PrimaryView = 'home' | 'library' | 'records' | 'add';
@@ -27,6 +28,20 @@ export function App() {
   const [purchaseDirty, setPurchaseDirty] = useState(false);
   const [drinkingDirty, setDrinkingDirty] = useState(false);
   const [purchaseDraft, setPurchaseDraft] = useState<PurchaseDraft>({ beanId: null, nonce: 0 });
+  const [auth, setAuth] = useState<{ mode: 'local' | 'enforced'; authenticated: boolean; username: string | null }>({ mode: 'local', authenticated: true, username: null });
+  const [loginOpen, setLoginOpen] = useState(false);
+  // U9：mode=enforced 时访客只读；canEdit 是 UI 门控，服务端写守卫才是强制边界。
+  const canEdit = auth.mode === 'local' || auth.authenticated;
+  const refreshAuth = useCallback(async () => {
+    const response = await fetch('/api/auth/session');
+    if (!response.ok) return;
+    const body = await response.json() as { mode?: 'local' | 'enforced'; authenticated?: boolean; username?: string | null };
+    setAuth({ mode: body.mode ?? 'local', authenticated: Boolean(body.authenticated), username: body.username ?? null });
+  }, []);
+  const logout = useCallback(async () => {
+    await fetch('/api/auth/logout', { method: 'POST', headers: { 'x-csrf-token': csrfToken } });
+    await refreshAuth();
+  }, [csrfToken, refreshAuth]);
 
   const refreshSnapshot = useCallback(async () => {
     const snapshotResponse = await fetch('/api/snapshot');
@@ -50,6 +65,9 @@ export function App() {
         if (!active) return;
         setCsrfToken(session.csrfToken);
         setAppState((current) => commitSnapshotState(current, snapshotBody));
+        void fetch('/api/auth/session').then((r) => r.json() as Promise<{ mode?: 'local' | 'enforced'; authenticated?: boolean; username?: string | null }>).then((body) => {
+          if (active) setAuth({ mode: body.mode ?? 'local', authenticated: Boolean(body.authenticated), username: body.username ?? null });
+        }).catch(() => undefined);
       } catch {
         if (active) setAppState((current) => ({ ...current, mode: 'error' }));
       }
@@ -118,6 +136,10 @@ export function App() {
             <button key={item.key} type="button" aria-current={view === item.key} onClick={() => switchView(item.key)}>{item.label}</button>
           ))}
         </nav>
+        {auth.mode === 'enforced' && (canEdit
+          ? <button type="button" className="text-button" onClick={() => void logout()}>退出（{auth.username ?? 'admin'}）</button>
+          : <button type="button" className="text-button" onClick={() => setLoginOpen(true)}>管理员登录</button>)}
+        <LoginDialog csrfToken={csrfToken} open={loginOpen} onClose={() => setLoginOpen(false)} onAuthenticated={(username) => { setLoginOpen(false); setAuth({ mode: 'enforced', authenticated: true, username }); }} />
       </header>
 
       <main id="main-content" tabIndex={-1}>
@@ -164,12 +186,15 @@ export function App() {
         {mode === 'ready' && csrfToken && view === 'records' && snapshot?.data && (
           <section className="record-studio" id="record-studio" aria-labelledby="record-studio-title">
             <div className="record-studio__heading"><div><p className="section-kicker">DAILY LEDGER</p><h2 id="record-studio-title">购买和饮用，分开写清楚。</h2></div><p>购买可以有多支豆；每次饮用只选一支，也可以不关联历史购买项。</p></div>
-            <div className="record-editors"><PurchaseEditor key={purchaseEditorKey(editingRecord, purchaseDraft)} csrfToken={csrfToken} data={snapshot.data} preselectedBeanId={purchaseDraft.beanId} initialPurchase={editingRecord?.kind === 'purchase' ? snapshot.data.purchases.find((item) => item.id === editingRecord.id) : undefined} onDataChanged={refreshSnapshot} onSaved={() => { setEditingRecord(null); setPurchaseDraft((current) => ({ ...current, beanId: null })); }} onDirtyChange={setPurchaseDirty} onCancelEdit={() => { setEditingRecord(null); setPurchaseDraft((current) => ({ ...current, beanId: null })); }} /><DrinkingEditor key={editingRecord?.kind === 'drinking' ? editingRecord.id : 'new-drinking'} csrfToken={csrfToken} data={snapshot.data} initialRecord={editingRecord?.kind === 'drinking' ? snapshot.data.drinkingRecords.find((item) => item.id === editingRecord.id) : undefined} onDataChanged={refreshSnapshot} onSaved={() => setEditingRecord(null)} onDirtyChange={setDrinkingDirty} onCancelEdit={() => setEditingRecord(null)} /></div>
+            {!canEdit && <p className="visitor-notice" role="note">访客只读：登录管理员后才能记录购买与饮用。</p>}
+            {canEdit && <div className="record-editors"><PurchaseEditor key={purchaseEditorKey(editingRecord, purchaseDraft)} csrfToken={csrfToken} data={snapshot.data} preselectedBeanId={purchaseDraft.beanId} initialPurchase={editingRecord?.kind === 'purchase' ? snapshot.data.purchases.find((item) => item.id === editingRecord.id) : undefined} onDataChanged={refreshSnapshot} onSaved={() => { setEditingRecord(null); setPurchaseDraft((current) => ({ ...current, beanId: null })); }} onDirtyChange={setPurchaseDirty} onCancelEdit={() => { setEditingRecord(null); setPurchaseDraft((current) => ({ ...current, beanId: null })); }} /><DrinkingEditor key={editingRecord?.kind === 'drinking' ? editingRecord.id : 'new-drinking'} csrfToken={csrfToken} data={snapshot.data} initialRecord={editingRecord?.kind === 'drinking' ? snapshot.data.drinkingRecords.find((item) => item.id === editingRecord.id) : undefined} onDataChanged={refreshSnapshot} onSaved={() => setEditingRecord(null)} onDirtyChange={setDrinkingDirty} onCancelEdit={() => setEditingRecord(null)} /></div>}
             <RecordTimeline csrfToken={csrfToken} data={snapshot.data} onDataChanged={refreshSnapshot} onEditPurchase={(id) => beginEditing('purchase', id)} onEditDrinking={(id) => beginEditing('drinking', id)} />
           </section>
         )}
         {mode === 'ready' && csrfToken && view === 'add' && (
-          <>{snapshot?.data && <CollectionWizard data={snapshot.data} csrfToken={csrfToken} onDataChanged={refreshSnapshot} />}</>
+          <>{!canEdit
+            ? <p className="visitor-notice" role="note">访客只读：登录管理员后才能添加新咖啡豆。</p>
+            : snapshot?.data && <CollectionWizard data={snapshot.data} csrfToken={csrfToken} onDataChanged={refreshSnapshot} />}</>
         )}
         {mode !== 'ready' && (
           <>
@@ -191,6 +216,7 @@ export function App() {
       <footer>
         <span>数据留在这里，判断属于你。</span>
         <span>single user · local first · no telemetry</span>
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">蒙ICP备2026010133号-1</a>
       </footer>
     </div>
   );
