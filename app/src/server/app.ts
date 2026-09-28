@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { z } from 'zod';
 import { JsonRepository } from '../storage/json-repository.js';
 import { installLocalSecurity } from './local-security.js';
+import { AdminAuth, registerAuthRoutes, registerWriteGuard } from './auth.js';
 import { registerImportRoutes } from './routes/import.js';
 import { registerTableImportRoutes } from './routes/table-import.js';
 import { registerDrinkingRoutes } from './routes/drinking.js';
@@ -21,6 +22,8 @@ export interface BuildAppOptions {
   serveStatic?: boolean;
   allowedOrigins?: string[];
   csrfToken?: string;
+  adminAuth?: { username: string; password: string };
+  allowedHosts?: string[];
   collectionService?: CollectionService;
 }
 
@@ -28,11 +31,18 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const app = Fastify({
     logger: false,
     bodyLimit: 1_000_000,
+    trustProxy: true,
   });
   const csrfToken = installLocalSecurity(app, {
     allowedOrigins: options.allowedOrigins,
     csrfToken: options.csrfToken,
+    allowedHosts: options.allowedHosts,
   });
+
+  // U9 鉴权：设置 COFFEE_DASHBOARD_ADMIN_PASSWORD 时强制访客只读；未设置保持本地单用户。
+  const adminAuth = new AdminAuth(options.adminAuth ?? { username: 'admin', password: '' });
+  registerAuthRoutes(app, adminAuth);
+  registerWriteGuard(app, adminAuth);
 
   const initialInspection = await options.repository.initialize();
 

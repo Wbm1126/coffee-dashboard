@@ -158,9 +158,9 @@ export function registerAuthRoutes(app: FastifyInstance, auth: AdminAuth): void 
   app.post('/api/auth/login', async (request, reply) => auth.handleLogin(request, reply));
   app.post('/api/auth/logout', async (request, reply) => auth.handleLogout(request, reply));
   app.get('/api/auth/session', async (request) => ({
-    mode: 'enforced',
-    authenticated: auth.isAuthenticated(request),
-    username: auth.isAuthenticated(request) ? 'admin' : null,
+    mode: auth.enabled ? 'enforced' : 'local',
+    authenticated: auth.enabled ? auth.isAuthenticated(request) : true,
+    username: auth.enabled && auth.isAuthenticated(request) ? 'admin' : null,
   }));
 }
 
