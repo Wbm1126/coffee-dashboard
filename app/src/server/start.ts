@@ -11,9 +11,10 @@ const devOrigins =
     ? [`http://127.0.0.1:${clientPort}`, `http://localhost:${clientPort}`]
     : [];
 // 反向代理部署时经 nginx 传入的 Host 非回环，需显式放行；未设置时保持仅回环可用。
+// 配置项与请求侧同样去掉尾部端口后再比对。
 const allowedHosts = (process.env.COFFEE_DASHBOARD_ALLOWED_HOSTS ?? '')
   .split(',')
-  .map((host) => host.trim())
+  .map((host) => host.trim().replace(/:\d{1,5}$/, ''))
   .filter(Boolean);
 
 const app = await buildApp({
