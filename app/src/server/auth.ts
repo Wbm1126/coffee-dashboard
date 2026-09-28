@@ -7,6 +7,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 export const SESSION_COOKIE = 'coffee_session';
+export const ADMIN_USERNAME = 'admin';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 const LOGIN_WINDOW_MS = 15 * 60 * 1_000;
 const MAX_FAILED_LOGINS_PER_WINDOW = 10;
@@ -160,7 +161,7 @@ export function registerAuthRoutes(app: FastifyInstance, auth: AdminAuth): void 
   app.get('/api/auth/session', async (request) => ({
     mode: auth.enabled ? 'enforced' : 'local',
     authenticated: auth.enabled ? auth.isAuthenticated(request) : true,
-    username: auth.enabled && auth.isAuthenticated(request) ? 'admin' : null,
+    username: auth.enabled && auth.isAuthenticated(request) ? ADMIN_USERNAME : null,
   }));
 }
 
